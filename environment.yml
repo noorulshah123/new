@@ -1,0 +1,27 @@
+name: pdfqa
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - boto3
+  - chromadb
+  - pdfplumber
+  - cryptography
+  - requests
+  - pyyaml
+  - fastapi
+  - uvicorn
+  - gradio
+  - pydantic
+  - PyJWT
+  - watchdog
+  - python-dotenv
+  - openai
+  - conda-pack
+  - pip:
+      - langchain>=0.0.300,<0.1.0
+      - llama-index>=0.8.0,<0.9.0
+      - streamlit>=1.24,<2.0
+      - python-multipart>=0.0.6,<0.1.0
