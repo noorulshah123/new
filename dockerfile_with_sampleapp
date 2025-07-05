@@ -1,0 +1,62 @@
+FROM continuumio/miniconda3:latest AS builder
+WORKDIR /app
+
+# Copy configuration files
+COPY app-runtime-pyshiny/environment.yml environment.yml
+COPY app-runtime-pyshiny/requirements.txt requirements.txt
+
+# (Optional) pip.conf if needed
+COPY pip.conf /etc/pip.conf
+RUN chmod 644 /etc/pip.conf
+
+# Create environment
+RUN conda env create -f environment.yml -n pdfqa && \
+    conda run -n pdfqa pip install --no-cache-dir -r requirements.txt && \
+    conda clean -afy
+
+# Pack environment
+RUN conda install -n pdfqa -c conda-forge conda-pack && \
+    conda-pack -n pdfqa -o /tmp/pdfqa.tar.gz
+
+# Final Stage: Slim runtime
+FROM python:3.10-slim
+WORKDIR /home/appuser/app
+
+# Extract conda environment
+COPY --from=builder /tmp/pdfqa.tar.gz /tmp/pdfqa.tar.gz
+RUN mkdir -p /opt/conda/envs/pdfqa && \
+    tar -xzf /tmp/pdfqa.tar.gz -C /opt/conda/envs/pdfqa && \
+    rm /tmp/pdfqa.tar.gz
+
+# Set PATH to use conda environment
+ENV PATH="/opt/conda/envs/pdfqa/bin:$PATH"
+
+# Copy app code
+COPY . .
+
+EXPOSE 8000
+
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
+
+
+#########
+  radio)
+    echo "Starting Gradio interface"
+    exec python app.py \
+      --server_name "${GRADIO_SERVER_NAME:-0.0.0.0}" \
+      --server_port "${GRADIO_SERVER_PORT:-$PORT}"
+    ;;
+#####
+app.py
+
+import argparse
+import gradio as gr
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--server_name", default="0.0.0.0")
+parser.add_argument("--server_port", type=int, default=7860)
+args = parser.parse_args()
+
+# Your Gradio interface
+interface = gr.Interface(fn=my_func, inputs="text", outputs="text")
+interface.launch(server_name=args.server_name, server_port=args.server_port)
