@@ -1,0 +1,134 @@
+# ----- Build stage -----
+FROM continuumio/miniconda3 AS build
+
+# Copy dependency files
+COPY environment.yml requirements.txt ./
+
+# Create the 'pdfqa' conda env and install dependencies
+RUN conda env create -n pdfqa -f environment.yml \
+    && conda run -n pdfqa pip install -r requirements.txt \
+    && conda clean -afy
+
+# Package the environment with conda-pack
+RUN conda install -n pdfqa -y -c conda-forge conda-pack \
+    && conda run -n pdfqa conda-pack -n pdfqa -o /tmp/env.tar \
+    && mkdir /venv && tar -xzf /tmp/env.tar -C /venv \
+    && rm /tmp/env.tar \
+    && /venv/bin/conda-unpack
+
+# ----- Final stage -----
+FROM python:3.10-slim
+
+# Install minimal system packages
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy the packed conda environment from the build stage
+COPY --from=build /venv /venv
+
+# Ensure the conda env's bin is on PATH (so python, aws, etc. are found)
+ENV PATH="/venv/bin:$PATH"
+
+# Copy entrypoint script and make it executable
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# Use the entrypoint
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+CMD ["python", "app.py"]
+
+----------
+# entrypoint.sh
+#!/bin/bash --login
+set -euo pipefail
+
+# Deactivate strict mode for conda activation
+set +euo pipefail
+source /venv/bin/activate   # activate the 'pdfqa' environment
+set -euo pipefail
+
+# Execute the final command
+exec "$@"
+
+---------------
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ------------------------------------------------------------------------------
+# 0. If you’re running in python:3.10-slim with a packed env at /opt/conda/envs/pdfqa,
+#    initialize conda and activate it so that 'aws', 'python', etc. come from pdfqa
+# ------------------------------------------------------------------------------
+# this file lives at /usr/local/bin/entrypoint.sh in your image
+# make sure /opt/conda/envs/pdfqa was copied in from the builder stage
+if [ -f /opt/conda/etc/profile.d/conda.sh ]; then
+  # shellcheck disable=SC1091
+  . /opt/conda/etc/profile.d/conda.sh
+  conda activate pdfqa
+else
+  # fallback: just put pdfqa’s bin first on PATH
+  export PATH="/opt/conda/envs/pdfqa/bin:$PATH"
+fi
+
+# ------------------------------------------------------------------------------
+# 1. Fetch code from S3 (if configured)
+# ------------------------------------------------------------------------------
+APP_DIR="${APP_DIR:-/home/shinyuser}"
+mkdir -p "$APP_DIR"
+
+if [[ -n "${S3_BUCKET:-}" && -n "${S3_KEY:-}" ]]; then
+  echo "Downloading app from s3://${S3_BUCKET}/${S3_KEY}"
+  aws s3 sync "s3://${S3_BUCKET}/${S3_KEY}" "$APP_DIR" --delete
+  # if you package a tar:
+  # aws s3 cp "s3://${S3_BUCKET}/${S3_KEY}/app.tar.gz" /tmp/app.tar.gz
+  # tar -xzf /tmp/app.tar.gz -C "$APP_DIR"
+else
+  echo "No S3_BUCKET/S3_KEY defined, assuming local code."
+fi
+
+# ------------------------------------------------------------------------------
+# 2. Launch based on APP_TYPE
+# ------------------------------------------------------------------------------
+case "${APP_TYPE:-fastapi}" in
+
+  streamlit)
+    echo "Starting Streamlit"
+    exec streamlit run "$APP_DIR/main.py" \
+      --server.port "$PORT" \
+      --server.address 0.0.0.0
+    ;;
+
+  pyshiny)
+    echo "Starting PyShiny"
+    exec gunicorn app:app \
+      --bind 0.0.0.0:"$PORT" \
+      -k uvicorn.workers.UvicornWorker
+    ;;
+
+  Rshiny)
+    echo "Starting R Shiny"
+    touch .Renviron
+    exec R -e "shiny::runApp('$APP_DIR', port=$PORT, host='0.0.0.0')"
+    ;;
+
+  fastapi)
+    echo "Starting FastAPI"
+    exec uvicorn main:app \
+      --host 0.0.0.0 \
+      --port "$PORT"
+    ;;
+
+  gradio)
+    echo "Starting Gradio interface"
+    # pass through GRADIO_SERVER_NAME/PORT into your app.py
+    exec python "$APP_DIR/app.py" \
+      --server_name "${GRADIO_SERVER_NAME:-0.0.0.0}" \
+      --server_port "${GRADIO_SERVER_PORT:-$PORT}"
+    ;;
+
+  *)
+    echo "Unknown APP_TYPE: '${APP_TYPE:-}'"
+    exit 1
+    ;;
+
+esac
+
