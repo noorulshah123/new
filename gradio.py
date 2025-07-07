@@ -140,3 +140,57 @@ if __name__ == "__main__":
         share=args.share
     )
 
+
+############
+# main.py
+import gradio as gr
+import argparse
+
+def greet(name: str) -> str:
+    return f"Hello, {name}!"
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Minimal Gradio health-check app")
+    parser.add_argument(
+        "--server_name", type=str, default="0.0.0.0",
+        help="host to serve on (0.0.0.0 for all interfaces)"
+    )
+    parser.add_argument(
+        "--server_port", type=int, default=8080,
+        help="port to serve on"
+    )
+    args = parser.parse_args()
+
+    iface = gr.Interface(
+        fn=greet,
+        inputs=gr.Textbox(label="Your Name"),
+        outputs=gr.Textbox(label="Greeting"),
+        title="Health-Check Gradio App",
+        description="Just enter your name and hit Submit"
+    )
+    # Launch on the host/port passed by your entrypoint script
+    iface.launch(server_name=args.server_name, server_port=args.server_port)
+
+#########
+# main.py
+import os
+import gradio as gr
+
+def greet(name: str) -> str:
+    return f"Hello, {name}!"
+
+# Read host and port from env, with sane defaults
+HOST = os.environ.get("SERVER_NAME", "0.0.0.0")
+PORT = int(os.environ.get("PORT", "8080"))
+
+iface = gr.Interface(
+    fn=greet,
+    inputs=gr.Textbox(label="Your Name"),
+    outputs=gr.Textbox(label="Greeting"),
+    title="Health-Check Gradio App",
+    description="Type your name and click Submit"
+)
+
+if __name__ == "__main__":
+    # Launch on the host/port that ShinyProxy expects
+    iface.launch(server_name=HOST, server_port=PORT)
