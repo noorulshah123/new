@@ -120,7 +120,23 @@ with gr.Blocks() as demo:
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Gradio Demo Application")
-    parser.add_argument("--server_name", type=str, default="127.0.0.1", help="Server name to run the app")
-    parser.add_argument("--server_port", type=int, default=7860, help="Port number to run the app")
+    parser.add_argument(
+        "--server_name", type=str, default="0.0.0.0",
+        help="Address to bind the Gradio server"
+    )
+    parser.add_argument(
+        "--server_port", type=int, default=7860,
+        help="Port number to run the app"
+    )
+    parser.add_argument(
+        "--share", action="store_true",
+        help="Whether to create a publicly shareable link via Gradio"
+    )
     args = parser.parse_args()
-    demo.launch(server_name=args.server_name, server_port=args.server_port)
+
+    demo.launch(
+        server_name=args.server_name,
+        server_port=args.server_port,
+        share=args.share
+    )
+
