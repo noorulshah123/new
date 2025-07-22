@@ -1,0 +1,120 @@
+https://stackoverflow.com/questions/53871676/how-to-fix-ssl-certificate-verification-error-for-a-gitlab-ci-build-that-uses-do#:~:text=From%20within%20the%20gitlab,client%20libraries%20for%20http%20requests
+
+https://return2.net/ca-certificate-gitlab-ci-dind/#:~:text=image%3A%20name%3A%20docker%3A19,dind%20%23
+
+########################################
+# .gitlab-ci.yml
+########################################
+
+# 1) Use Miniconda for Python & Conda
+image: continuumio/miniconda3
+
+# 2) Stages
+stages:
+  - build
+  - push
+
+########################################
+# 3) Docker‑in‑Docker service
+########################################
+services:
+  - name: docker:dind
+    alias: docker
+    # We need to install your internal CA *inside* the DinD container
+    # so that the Docker daemon trusts your private registries / HTTPS endpoints.
+    command:
+      - /bin/sh
+      - -c
+      - |
+        echo "$CA_CERTIFICATE" > /usr/local/share/ca-certificates/internal-ca.crt \
+        && update-ca-certificates \
+        && dockerd-entrypoint.sh
+
+# 4) Global variables
+variables:
+  # Point the Docker SDK (and CLI) to the DinD daemon
+  DOCKER_HOST:        "tcp://docker:2375"
+  DOCKER_TLS_CERTDIR: ""                # disable TLS (plaintext on 2375)
+  DOCKER_DRIVER:      "overlay2"
+
+  # Where to find your CA inside each container
+  REQUESTS_CA_BUNDLE: "/etc/ssl/certs/ca-certificates.crt"
+  SSL_CERT_FILE:      "/etc/ssl/certs/ca-certificates.crt"
+
+  # SageMaker Distribution versioning
+  V3_MINOR_VERSION:   "2"
+  V3_PATCH_VERSION:   "0"
+  IMAGE_TAG:          "3.${V3_MINOR_VERSION}.${V3_PATCH_VERSION}-cpu"
+  ECR_REPO_NAME:      "bnp-sagemaker-distribution"
+
+  # For pushing (set these in CI/CD Settings → Variables)
+  AWS_ACCOUNT_ID:     "${AWS_ACCOUNT_ID}"
+  AWS_DEFAULT_REGION: "${AWS_DEFAULT_REGION}"
+  ECR_ACCOUNT_URI:    "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/${ECR_REPO_NAME}"
+
+########################################
+# 5) Build job
+########################################
+build-image:
+  stage: build
+  tags:
+    - docker‑privileged    # your runner must be privileged to run DinD
+  before_script:
+    # 1. Enable bash + conda
+    - conda init bash && source ~/.bashrc
+
+    # 2. Create / update your Conda env from lock file
+    - conda env create --name sagemaker-build --file environment.lock \
+      || conda env update --name sagemaker-build --file environment.lock
+
+    # 3. Activate it
+    - conda activate sagemaker-build
+
+    # 4. Install the Python Docker SDK + AWS CLI
+    - pip install --no-cache-dir docker awscli
+
+    # 5. Trust your CA in *this* container too
+    - echo "$CA_CERTIFICATE" > internal-ca.crt \
+      && sudo cp internal-ca.crt /usr/local/share/ca-certificates/ \
+      && sudo update-ca-certificates
+
+  script:
+    - echo "🔨 Building SageMaker Distribution (CPU)…"
+
+    # Run AWS repo’s build command (it uses the Docker SDK internally)
+    - python src/main.py build \
+        --target-patch-version "${IMAGE_TAG}" \
+        --force \
+        --skip-tests
+
+    # Tag the newly built image for ECR
+    - docker tag "sagemaker-distribution:latest" "${ECR_ACCOUNT_URI}:${IMAGE_TAG}"
+
+  artifacts:
+    # (Optional) persist any build artifacts or logs
+    paths:
+      - build_artifacts/
+
+########################################
+# 6) Push job (only on main)
+########################################
+push-image:
+  stage: push
+  image: amazon/aws-cli:latest
+  dependencies:
+    - build-image
+  only:
+    - main
+  before_script:
+    # Install Docker CLI so we can push
+    - apk add --no-cache docker
+  script:
+    - echo "🔐 Logging into ECR…"
+    - aws ecr get-login-password \
+        --region "$AWS_DEFAULT_REGION" \
+      | docker login \
+        --username AWS \
+        --password-stdin "$ECR_ACCOUNT_URI"
+
+    - echo "📤 Pushing ${ECR_REPO_NAME}:${IMAGE_TAG}…"
+    - docker push "${ECR_ACCOUNT_URI}:${IMAGE_TAG}"
