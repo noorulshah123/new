@@ -118,3 +118,76 @@ push-image:
 
     - echo "📤 Pushing ${ECR_REPO_NAME}:${IMAGE_TAG}…"
     - docker push "${ECR_ACCOUNT_URI}:${IMAGE_TAG}"
+
+
+
+
+
+
+
+###################################
+##################################
+##############################
+
+build-image:
+  stage: build
+  image: continuumio/miniconda3
+  services:
+    - name: docker:dind
+      alias: docker
+      command:
+        - /bin/sh
+        - -c
+        - |
+          # install CA into the DinD daemon
+          echo "$CA_CERTIFICATE" \
+            > /usr/local/share/ca-certificates/cloudguard-root.crt \
+          && update-ca-certificates \
+          && dockerd-entrypoint.sh
+
+  variables:
+    DOCKER_HOST:       "tcp://docker:2375"
+    DOCKER_TLS_CERTDIR: ""
+    HTTP_PROXY:        "${HTTP_PROXY}"
+    HTTPS_PROXY:       "${HTTPS_PROXY}"
+    NO_PROXY:          "docker,localhost,127.0.0.1"
+    REQUESTS_CA_BUNDLE: "/etc/ssl/certs/ca-certificates.crt"
+    SSL_CERT_FILE:     "/etc/ssl/certs/ca-certificates.crt"
+
+  before_script:
+    - conda init bash && source ~/.bashrc
+    - conda env create -n sagemaker-build -f environment.lock \
+        || conda env update -n sagemaker-build -f environment.lock
+    - conda activate sagemaker-build
+    - pip install docker awscli
+
+    # Trust CA in the job container too
+    - echo "$CA_CERTIFICATE" > internal-ca.crt
+    - sudo cp internal-ca.crt /usr/local/share/ca-certificates/
+    - sudo update-ca-certificates
+
+    # Make sure the CA file is in the build context
+    - cp cloudguard-root.crt .
+
+    # Patch every variant Dockerfile to trust CA + proxy
+    - |
+      for df in build_artifacts/v3/v3.*/*.Dockerfile; do
+        sed -i '1i\
+COPY cloudguard-root.crt /usr/local/share/ca-certificates/cloudguard-root.crt\n\
+RUN update-ca-certificates\n\
+ARG HTTP_PROXY\n\
+ARG HTTPS_PROXY\n\
+ARG NO_PROXY\n\
+ENV HTTP_PROXY=${HTTP_PROXY} HTTPS_PROXY=${HTTPS_PROXY} NO_PROXY=${NO_PROXY}' "$df"
+      done
+
+  script:
+    - echo "🔨 Building SMD CPU image…"
+    - python src/main.py build \
+        --target-patch-version "${V3_MINOR_VERSION}.${V3_PATCH_VERSION}-cpu" \
+        --force \
+        --skip-tests
+    - docker tag \
+        "sagemaker-distribution:latest" \
+        "${ECR_ACCOUNT_URI}:${V3_MINOR_VERSION}.${V3_PATCH_VERSION}-cpu"
+
