@@ -1,0 +1,308 @@
+# .gitlab-ci.yml
+
+##############################################
+# 1. GLOBAL SETTINGS
+##############################################
+image: continuumio/miniconda3
+
+# Define your stages  
+stages:
+  - build
+  - push
+
+# Global variables (override these in CI/CD Settings → Variables)
+variables:
+  # DinD setup
+  DOCKER_HOST:             "tcp://docker:2375"
+  DOCKER_TLS_CERTDIR:      ""               # disable TLS between client & daemon
+  DOCKER_DRIVER:           "overlay2"
+
+  # Proxy (point to your corporate proxy)
+  HTTP_PROXY:              "${HTTP_PROXY}"
+  HTTPS_PROXY:             "${HTTPS_PROXY}"
+  NO_PROXY:                "docker,localhost,127.0.0.1,${NO_PROXY}"
+
+  # SSL certs (after update-ca-certificates, both job & DinD will trust your CA)
+  REQUESTS_CA_BUNDLE:      "/etc/ssl/certs/ca-certificates.crt"
+  SSL_CERT_FILE:           "/etc/ssl/certs/ca-certificates.crt"
+
+  # SageMaker Distribution version variables
+  V3_MINOR_VERSION:        "2"
+  V3_PATCH_VERSION:        "0"
+  IMAGE_TAG:               "3.${V3_MINOR_VERSION}.${V3_PATCH_VERSION}-cpu"
+  ECR_REPO_NAME:           "bnp-sagemaker-distribution"
+
+  # (For push stage—set these in CI/CD Settings → Variables)
+  AWS_ACCOUNT_ID:          "${AWS_ACCOUNT_ID}"
+  AWS_DEFAULT_REGION:      "${AWS_DEFAULT_REGION}"
+  ECR_ACCOUNT_URI:         "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/${ECR_REPO_NAME}"
+
+##############################################
+# 2. DIN‑D SERVICE: Inject CA & start Docker
+##############################################
+services:
+  - name: docker:dind
+    alias: docker
+    command:
+      - /bin/sh
+      - -c
+      - |
+        # install the internal CA into DinD’s trust store
+        echo "$CA_CERTIFICATE" > /usr/local/share/ca-certificates/internal-ca.crt \
+        && update-ca-certificates \
+        && dockerd-entrypoint.sh
+
+##############################################
+# 3. BUILD JOB: create Conda env, install deps, build image
+##############################################
+build-image:
+  stage: build
+  tags:
+    - docker           # ensure this runner supports DinD & privileged
+    - privileged
+  before_script:
+    # 1) Enable conda in bash
+    - conda init bash && source ~/.bashrc
+
+    # 2) Create or update your conda env from the lock file
+    #    (assumes environment.lock is at repo root)
+    - conda env create --name sagemaker-build --file environment.lock || \
+      conda env update --name sagemaker-build --file environment.lock
+
+    # 3) Activate it
+    - conda activate sagemaker-build
+
+    # 4) Install the Python Docker SDK (and AWS CLI if you plan to push later)
+    - pip install --no-cache-dir docker awscli
+
+    # 5) (Optionally) trust the CA in this container, too
+    - echo "$CA_CERTIFICATE" > internal-ca.crt \
+      && sudo cp internal-ca.crt /usr/local/share/ca-certificates/ \
+      && sudo update-ca-certificates
+
+  script:
+    - echo "🛠 Building SageMaker Distribution (CPU) image…"
+    # 1) Run AWS repo’s Python build (this will generate Dockerfiles/artifacts)
+    - python src/main.py build \
+        --target-patch-version "${IMAGE_TAG}" \
+        --force \
+        --skip-tests
+
+    # 2) Tag the image that main.py produced (adjust name if needed)
+    - docker tag "sagemaker-distribution:latest" "${ECR_REPO_NAME}:${IMAGE_TAG}"
+
+  artifacts:
+    # Optional: keep the built image name or metadata
+    paths:
+      - build_artifacts/
+
+##############################################
+# 4. PUSH JOB: login to ECR & push (only on main branch)
+##############################################
+push-image:
+  stage: push
+  image: amazon/aws-cli:latest
+  dependencies:
+    - build-image
+  only:
+    - main
+  before_script:
+    # install docker CLI so we can push
+    - apk add --no-cache docker
+  script:
+    - echo "🔐 Logging into ECR…"
+    - aws ecr get-login-password \
+        --region "$AWS_DEFAULT_REGION" \
+      | docker login \
+        --username AWS \
+        --password-stdin "$ECR_ACCOUNT_URI"
+
+    - echo "📤 Pushing ${ECR_REPO_NAME}:${IMAGE_TAG}…"
+    - docker push "${ECR_ACCOUNT_URI}:${IMAGE_TAG}"
+
+##################################################################################
+import docker
+client = docker.from_env()         # picks up DOCKER_HOST
+client.images.build(path=".", tag="sagemaker-dist:latest", buildargs={"http_proxy": os.getenv("HTTP_PROXY"), ...})
+
+
+######################
+
+image: continuumio/miniconda3
+
+services:
+  - name: docker:24-dind
+    alias: docker
+    # share the DinD daemon’s certs into your job
+    volumes:
+      - docker-certs-daemon:/certs/daemon:ro
+      - docker-certs-client:/certs/client:ro
+
+variables:
+  DOCKER_HOST: "tcp://docker:2376"
+  DOCKER_TLS_VERIFY: "1"
+  DOCKER_CERT_PATH: "/certs/client"   # where the client‐side cert/key live
+
+before_script:
+  - pip install docker
+  # ensure requests & urllib3 pick up the daemon’s CA:
+  - export REQUESTS_CA_BUNDLE=/certs/daemon/ca.pem
+
+  - eval "$(conda shell.bash hook)"
+  - conda create --name sagemaker-distribution -f environment.lock
+  - conda activate sagemaker-distribution
+
+build:
+  script:
+    - python main.py build …
+##################################################
+
+stages:
+  - setup
+  - build
+  - test
+  - push
+
+variables:
+  DOCKER_DRIVER: overlay2
+  DOCKER_TLS_CERTDIR: ""
+  DOCKER_HOST: tcp://docker:2376
+  V3_MINOR_VERSION: "1"
+  V3_PATCH_VERSION: "0"
+  TARGET_VERSION: "3.${V3_MINOR_VERSION}.${V3_PATCH_VERSION}"
+  PYTHONHTTPSVERIFY: "0"
+  CURL_CA_BUNDLE: ""
+  REQUESTS_CA_BUNDLE: ""
+
+before_script:
+  # Setup corporate CA certificates
+  - |
+    if [ -f "/etc/ssl/certs/company-ca-cert.crt" ]; then
+      cp /etc/ssl/certs/company-ca-cert.crt /usr/local/share/ca-certificates/
+      update-ca-certificates
+    fi
+  # Configure proxy environment
+  - export HTTP_PROXY="$CORPORATE_PROXY"
+  - export HTTPS_PROXY="$CORPORATE_PROXY" 
+  - export NO_PROXY="localhost,127.0.0.1,$INTERNAL_DOMAINS"
+  # Configure Git for proxy
+  - git config --global http.proxy "$CORPORATE_PROXY"
+  - git config --global http.sslVerify false
+  # Configure Docker daemon for insecure registries
+  - mkdir -p /etc/docker
+  - |
+    cat > /etc/docker/daemon.json << EOF
+    {
+      "insecure-registries": ["0.0.0.0/0"],
+      "registry-mirrors": ["$INTERNAL_DOCKER_REGISTRY"],
+      "log-driver": "json-file"
+    }
+    EOF
+
+setup_environment:
+  stage: setup
+  image: continuumio/miniconda3:latest
+  script:
+    # Install required dependencies with proxy configuration
+    - conda config --set ssl_verify False
+    - conda config --add channels conda-forge
+    - conda install -y python=3.11 docker-py pyyaml requests urllib3
+    - pip install --trusted-host pypi.org --trusted-host files.pythonhosted.org docker boto3
+    
+    # Clone official SageMaker Distribution repository
+    - git clone --depth 1 https://github.com/aws/sagemaker-distribution.git
+    - cd sagemaker-distribution
+    
+    # Apply Ubuntu 24.04 modifications as per AWS Support guidance
+    - sed -i 's/22.04/24.04/g' src/config.py
+    - sed -i 's/$${MAMBA_USER}/"ubuntu"/g' build_artifacts/v3/v3.${V3_MINOR_VERSION}/v3.${V3_MINOR_VERSION}.${V3_PATCH_VERSION}/Dockerfile
+    
+  artifacts:
+    paths:
+      - sagemaker-distribution/
+    expire_in: 1 hour
+
+build_sagemaker_ubuntu24:
+  stage: build
+  image: continuumio/miniconda3:latest
+  services:
+    - name: docker:dind
+      command: ["--insecure-registry=0.0.0.0/0", "--registry-mirror=$INTERNAL_DOCKER_REGISTRY"]
+  dependencies:
+    - setup_environment
+  script:
+    - cd sagemaker-distribution
+    
+    # Setup Python environment for build
+    - conda install -y docker-py pyyaml requests urllib3
+    - pip install --trusted-host pypi.org --trusted-host files.pythonhosted.org docker
+    
+    # Configure SSL and proxy for Python
+    - export PYTHONHTTPSVERIFY=0
+    - export SSL_VERIFY=False
+    
+    # Build image using official build script with Ubuntu 24.04
+    - |
+      python src/main.py build \
+        --target-patch-version ${TARGET_VERSION} \
+        --force \
+        --skip-tests
+        
+    # Tag the built image
+    - docker tag localhost/sagemaker-distribution:${TARGET_VERSION} sagemaker-distribution-ubuntu24:${TARGET_VERSION}
+    
+  artifacts:
+    reports:
+      junit: test-results.xml
+
+test_ubuntu24_image:
+  stage: test  
+  image: continuumio/miniconda3:latest
+  services:
+    - name: docker:dind
+      command: ["--insecure-registry=0.0.0.0/0"]
+  dependencies:
+    - build_sagemaker_ubuntu24
+  script:
+    - conda install -y docker-py
+    
+    # Test Ubuntu version
+    - docker run --rm sagemaker-distribution-ubuntu24:${TARGET_VERSION} lsb_release -a | grep "24.04"
+    
+    # Test Python and key packages
+    - |
+      docker run --rm sagemaker-distribution-ubuntu24:${TARGET_VERSION} python -c "
+      import sys
+      print(f'Python version: {sys.version}')
+      import numpy, pandas, sklearn, boto3, sagemaker
+      print('All key packages imported successfully!')
+      "
+      
+    # Test micromamba
+    - docker run --rm sagemaker-distribution-ubuntu24:${TARGET_VERSION} micromamba --version
+
+push_to_ecr:
+  stage: push
+  image: continuumio/miniconda3:latest
+  services:
+    - name: docker:dind 
+      command: ["--insecure-registry=0.0.0.0/0"]
+  dependencies:
+    - test_ubuntu24_image
+  before_script:
+    - conda install -y awscli
+    - aws configure set default.region $AWS_DEFAULT_REGION
+    - aws configure set default.ca_bundle ""
+    # Login to ECR with proxy configuration
+    - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
+  script:
+    # Tag and push following official naming convention
+    - docker tag sagemaker-distribution-ubuntu24:${TARGET_VERSION} $ECR_REPO_URI:${TARGET_VERSION}-cpu
+    - docker tag sagemaker-distribution-ubuntu24:${TARGET_VERSION} $ECR_REPO_URI:latest-cpu
+    
+    - docker push $ECR_REPO_URI:${TARGET_VERSION}-cpu
+    - docker push $ECR_REPO_URI:latest-cpu
+    
+    - echo "Image pushed successfully: $ECR_REPO_URI:${TARGET_VERSION}-cpu"
+  only:
+    - main
