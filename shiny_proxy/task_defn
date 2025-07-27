@@ -1,0 +1,136 @@
+{
+  "family": "shinyproxy-${TEAM_NAME}",
+  "taskRoleArn": "${TASK_ROLE_ARN}",
+  "executionRoleArn": "${EXECUTION_ROLE_ARN}",
+  "networkMode": "awsvpc",
+  "cpu": "4096",
+  "memory": "8192",
+  "requiresCompatibilities": ["FARGATE"],
+  "containerDefinitions": [
+    {
+      "name": "shinyproxy",
+      "image": "${ECR_REGISTRY}/shinyproxy:latest",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 8080,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        {
+          "name": "TEAM_NAME",
+          "value": "${TEAM_NAME}"
+        },
+        {
+          "name": "ENVIRONMENT",
+          "value": "${ENVIRONMENT}"
+        },
+        {
+          "name": "AWS_REGION",
+          "value": "${AWS_REGION}"
+        },
+        {
+          "name": "REDIS_HOST",
+          "value": "${REDIS_HOST}"
+        },
+        {
+          "name": "REDIS_PORT",
+          "value": "${REDIS_PORT}"
+        },
+        {
+          "name": "CLUSTER_NAME",
+          "value": "${ECS_CLUSTER_NAME}"
+        },
+        {
+          "name": "SECURITY_GROUP",
+          "value": "${SECURITY_GROUP_ID}"
+        },
+        {
+          "name": "SUBNETS",
+          "value": "${SUBNET_IDS}"
+        },
+        {
+          "name": "TASK_ROLE_ARN",
+          "value": "${TASK_ROLE_ARN}"
+        },
+        {
+          "name": "EXECUTION_ROLE_ARN",
+          "value": "${EXECUTION_ROLE_ARN}"
+        }
+      ],
+      "secrets": [
+        {
+          "name": "REDIS_PASSWORD",
+          "valueFrom": "arn:aws:secretsmanager:${AWS_REGION}:${AWS_ACCOUNT_ID}:secret:${TEAM_NAME}/redis/password"
+        },
+        {
+          "name": "OPENID_CLIENT_ID",
+          "valueFrom": "arn:aws:ssm:${AWS_REGION}:${AWS_ACCOUNT_ID}:parameter/${TEAM_NAME}/openid/client-id"
+        },
+        {
+          "name": "OPENID_CLIENT_SECRET",
+          "valueFrom": "arn:aws:secretsmanager:${AWS_REGION}:${AWS_ACCOUNT_ID}:secret:${TEAM_NAME}/openid/client-secret"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/shinyproxy/${TEAM_NAME}",
+          "awslogs-region": "${AWS_REGION}",
+          "awslogs-stream-prefix": "shinyproxy"
+        }
+      },
+      "healthCheck": {
+        "command": ["CMD-SHELL", "curl -f http://localhost:8080/actuator/health || exit 1"],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 120
+      },
+      "mountPoints": [
+        {
+          "sourceVolume": "shinyproxy-logs",
+          "containerPath": "/var/log/shinyproxy"
+        }
+      ],
+      "ulimits": [
+        {
+          "name": "nofile",
+          "softLimit": 65536,
+          "hardLimit": 65536
+        }
+      ],
+      "linuxParameters": {
+        "initProcessEnabled": true
+      }
+    }
+  ],
+  "volumes": [
+    {
+      "name": "shinyproxy-logs",
+      "efsVolumeConfiguration": {
+        "fileSystemId": "${EFS_ID}",
+        "rootDirectory": "/shinyproxy-logs/${TEAM_NAME}",
+        "transitEncryption": "ENABLED",
+        "authorizationConfig": {
+          "accessPointId": "${EFS_ACCESS_POINT_ID}"
+        }
+      }
+    }
+  ],
+  "tags": [
+    {
+      "key": "Team",
+      "value": "${TEAM_NAME}"
+    },
+    {
+      "key": "Application",
+      "value": "ShinyProxy"
+    },
+    {
+      "key": "Environment",
+      "value": "${ENVIRONMENT}"
+    }
+  ]
+}
