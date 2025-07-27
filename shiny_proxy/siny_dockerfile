@@ -1,0 +1,12 @@
+# After creating the shiny user (around line 143)
+RUN getent group shiny || groupadd -r shiny && getent passwd shiny || useradd -r -g shiny shiny
+
+# Create necessary directories with proper permissions
+RUN mkdir -p /var/lib/shiny-server/bookmarks && \
+    mkdir -p /var/log/shiny-server && \
+    mkdir -p /srv/shiny-server && \
+    mkdir -p /var/run/shiny-server && \
+    chown -R shiny:shiny /var/lib/shiny-server && \
+    chown -R shiny:shiny /var/log/shiny-server && \
+    chown -R shiny:shiny /srv/shiny-server && \
+    chown -R shiny:shiny /var/run/shiny-server
