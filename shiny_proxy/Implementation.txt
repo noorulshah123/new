@@ -1,0 +1,45 @@
+Key Implementation Details
+1. Pre-initialization Flow
+Containers start before user authentication
+ShinyProxy passes auth data via HTTP headers instead of environment variables
+Apps must handle both header-based and env-based authentication
+2. Container Pool Management
+container-instances-min: Maintains minimum number of ready containers
+container-instances-max: Limits maximum containers to control costs
+container-idle-timeout: Releases idle containers back to pool
+container-sharing-enabled: Allows multiple users to share containers
+3. Security Considerations
+Headers are only trusted from ShinyProxy (not from external sources)
+Redis namespacing prevents data leakage between teams
+Access control via access-users and access-groups
+Container isolation at network level
+4. Resource Optimization
+Pre-initialized containers reduce startup time from minutes to seconds
+Container sharing reduces resource usage for read-only apps
+Scheduled pre-initialization (business hours only) saves costs
+Idle timeout returns containers to pool
+5. Monitoring and Operations
+CloudWatch metrics for container utilization
+Health checks ensure container readiness
+Recovery mechanisms for failed containers
+Logging integration for debugging
+6. Deployment Considerations
+Each team needs:
+ECS cluster with appropriate capacity
+S3 bucket with apps.yml
+Redis instance (can be shared with namespacing)
+Secrets in AWS Secrets Manager
+IAM roles with proper permissions
+7. ALB Routing
+Use header-based routing rules
+Path-based routing as fallback
+Health checks on /actuator/health
+This implementation provides a robust, scalable solution for running ShinyProxy with pre-initialized containers on AWS ECS, supporting multi-tenancy and optimized resource usage.
+
+
+
+
+
+
+
+
