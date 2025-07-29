@@ -1,0 +1,264 @@
+# Start with the official Rocker r-base image which has proven R installation
+FROM rocker/r-base:4.3.3
+
+# Set environment variables
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=UTC
+ENV LANG=en_US.UTF-8
+ENV LC_ALL=en_US.UTF-8
+
+# Snowflake versions
+ARG SNOWFLAKE_VERSION="2.25.9"
+ARG SNOWFLAKE_FILE="snowflake_linux_x8664_odbc-${SNOWFLAKE_VERSION}.tgz"
+ARG SF_JDBC_VERSION="3.13.34"
+ARG SF_JDBC_FILE="snowflake-jdbc-${SF_JDBC_VERSION}.jar"
+
+# Update and install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # Essential tools
+    locales \
+    ca-certificates \
+    curl \
+    wget \
+    gnupg \
+    gnupg2 \
+    lsb-release \
+    software-properties-common \
+    # Build tools
+    build-essential \
+    gfortran \
+    cmake \
+    # Graphics and fonts
+    libfreetype6-dev \
+    libpng-dev \
+    libjpeg-dev \
+    libxml2-dev \
+    libharfbuzz-dev \
+    libfribidi-dev \
+    libfontconfig1-dev \
+    # Network and SSL
+    libcurl4-openssl-dev \
+    libssl-dev \
+    libgit2-dev \
+    # Database connectivity
+    unixodbc \
+    unixodbc-dev \
+    # Python dependencies - CRITICAL for reticulate
+    python3-dev \
+    python3-pip \
+    python3-venv \
+    libpython3-dev \
+    python3-setuptools \
+    # Java
+    openjdk-11-jdk \
+    # GDAL
+    gdal-bin \
+    libgdal-dev \
+    # Other utilities
+    sudo \
+    gdebi-core \
+    unzip \
+    netcat-openbsd \
+    # Additional libraries for R packages
+    libgmp-dev \
+    libmpfr-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set locale
+RUN locale-gen en_US.UTF-8 && update-locale LANG=en_US.UTF-8
+
+# Add cloudguard certificate
+ADD cloudguard-root.crt /usr/local/share/ca-certificates/cloudguard-root.crt
+RUN chmod 644 /usr/local/share/ca-certificates/cloudguard-root.crt \
+    && update-ca-certificates
+
+# Install Shiny Server
+RUN wget https://download3.rstudio.org/ubuntu-18.04/x86_64/shiny-server-1.5.21.1012-amd64.deb \
+    && gdebi -n shiny-server-1.5.21.1012-amd64.deb \
+    && rm shiny-server-1.5.21.1012-amd64.deb
+
+# Install AWS CLI v2
+RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscli2.zip" \
+    && unzip -q awscli2.zip \
+    && ./aws/install \
+    && rm -rf awscli2.zip aws
+
+# CRITICAL: Set up Python 3.11 with proper shared library support
+WORKDIR /tmp
+RUN wget https://www.python.org/ftp/python/3.11.0/Python-3.11.0.tgz \
+    && tar -xzf Python-3.11.0.tgz \
+    && cd Python-3.11.0 \
+    && ./configure --enable-shared --enable-optimizations --prefix=/usr/local \
+    && make -j$(nproc) \
+    && make install \
+    && ldconfig \
+    && cd .. \
+    && rm -rf Python-3.11.0 Python-3.11.0.tgz
+
+# Create symlinks for python
+RUN ln -sf /usr/local/bin/python3.11 /usr/local/bin/python3 \
+    && ln -sf /usr/local/bin/python3.11 /usr/local/bin/python \
+    && ln -sf /usr/local/bin/pip3.11 /usr/local/bin/pip3 \
+    && ln -sf /usr/local/bin/pip3.11 /usr/local/bin/pip
+
+# Create and activate virtual environment
+RUN python3.11 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+ENV VIRTUAL_ENV="/opt/venv"
+
+# CRITICAL: Set Python environment variables for reticulate
+ENV RETICULATE_PYTHON="/opt/venv/bin/python"
+ENV PYTHONPATH="/opt/venv/lib/python3.11/site-packages:$PYTHONPATH"
+ENV LD_LIBRARY_PATH="/usr/local/lib:$LD_LIBRARY_PATH"
+
+# Install Python packages
+COPY pip.conf /etc/pip.conf
+RUN chmod 644 /etc/pip.conf
+RUN pip install --upgrade pip setuptools wheel \
+    && pip install certifi \
+    && pip install numpy pandas \
+    && pip install --no-cache-dir bhp-sagemaker==2.2.10 || echo "Warning: bhp-sagemaker installation failed" \
+    && pip install msal
+
+# Configure Java for R
+ENV JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
+RUN R CMD javareconf
+
+# Install Snowflake ODBC driver
+RUN mkdir -p /usr/lib/snowflake && cd /usr/lib/snowflake \
+    && curl -k -L "https://sfc-repo.snowflakecomputing.com/odbc/linux/${SNOWFLAKE_VERSION}/${SNOWFLAKE_FILE}" -o "${SNOWFLAKE_FILE}" \
+    && tar xf ${SNOWFLAKE_FILE} \
+    && mv snowflake_odbc odbc \
+    && ./odbc/unixodbc_setup.sh \
+    && rm -f ${SNOWFLAKE_FILE} \
+    && sed -i "s/ODBCInstLib=\/usr\/lib64\/libodbcinst.so/ODBCInstLib=\/usr\/lib\/x86_64-linux-gnu\/libodbcinst.so.2/g" /usr/lib/snowflake/odbc/lib/simba.snowflake.ini
+
+# Copy ODBC configuration
+COPY app-runtime/artifacts/odbc.ini /etc/odbc.ini
+
+# Install Snowflake JDBC driver
+RUN mkdir -p /usr/lib/snowflake/jdbc && cd /usr/lib/snowflake/jdbc \
+    && curl -L "https://repo1.maven.org/maven2/net/snowflake/snowflake-jdbc/${SF_JDBC_VERSION}/${SF_JDBC_FILE}" -o "${SF_JDBC_FILE}"
+
+# Install R packages with explicit CRAN repo
+RUN R -e "options(repos = c(CRAN = 'https://cran.rstudio.com/')); \
+    install.packages('BiocManager'); \
+    install.packages('remotes'); \
+    install.packages(c('devtools', 'bslib', 'shiny', 'shinyWidgets', \
+    'shinydashboard', 'shinycssloaders', 'shinylogs', 'stringr', \
+    'tidyr', 'dplyr', 'utils', 'uuid', 'withr', 'htmltools', 'httr', \
+    'jsonlite', 'lubridate', 'odbc', 'openxlsx', 'plotly', \
+    'purrr', 'R.utils', 'reshape2', 'rhandsontable', \
+    'RJDBC', 'RODBC', 'readr', 'DT', 'sass', 'ggplot2'))"
+
+# CRITICAL: Install reticulate after Python is properly configured
+RUN R -e "options(repos = c(CRAN = 'https://cran.rstudio.com/')); \
+    Sys.setenv(RETICULATE_PYTHON = '/opt/venv/bin/python'); \
+    install.packages('reticulate'); \
+    library(reticulate); \
+    py_config()"
+
+# Create shiny user if not exists
+RUN if ! id -u shiny > /dev/null 2>&1; then \
+        useradd -r -m -d /home/shiny -s /bin/bash shiny; \
+    fi
+
+# Create ALL necessary directories
+RUN mkdir -p /var/lib/shiny-server/bookmarks \
+    && mkdir -p /var/log/shiny-server \
+    && mkdir -p /srv/shiny-server/app \
+    && mkdir -p /var/run/shiny-server \
+    && mkdir -p /tmp/shiny-server \
+    && mkdir -p /etc/shiny-server \
+    && mkdir -p /home/shiny/.config \
+    && mkdir -p /home/shiny/.local \
+    && mkdir -p /home/shiny/.cache \
+    && mkdir -p /home/shiny/R/library
+
+# Set ownership
+RUN chown -R shiny:shiny /var/lib/shiny-server \
+    && chown -R shiny:shiny /var/log/shiny-server \
+    && chown -R shiny:shiny /srv/shiny-server \
+    && chown -R shiny:shiny /var/run/shiny-server \
+    && chown -R shiny:shiny /tmp/shiny-server \
+    && chown -R shiny:shiny /home/shiny \
+    && chown shiny:shiny /etc/shiny-server
+
+# Set permissions
+RUN chmod -R 755 /var/lib/shiny-server \
+    && chmod -R 755 /var/log/shiny-server \
+    && chmod -R 755 /srv/shiny-server \
+    && chmod -R 755 /var/run/shiny-server \
+    && chmod -R 755 /tmp/shiny-server
+
+# Create optimized shiny-server configuration
+RUN echo 'run_as shiny;\n\
+\n\
+# Increase app init timeout\n\
+app_init_timeout 300;\n\
+\n\
+# Increase app idle timeout\n\
+app_idle_timeout 1800;\n\
+\n\
+server {\n\
+  listen 3838;\n\
+  \n\
+  location / {\n\
+    site_dir /srv/shiny-server/app;\n\
+    log_dir /var/log/shiny-server;\n\
+    directory_index on;\n\
+    bookmark_state_dir /var/lib/shiny-server/bookmarks;\n\
+    \n\
+    # Increase connection timeout\n\
+    app_init_timeout 300;\n\
+    app_idle_timeout 1800;\n\
+  }\n\
+}' > /etc/shiny-server/shiny-server.conf
+
+# Copy JDBC configuration
+COPY --chown=shiny:shiny app-runtime/artifacts/jdbc.ini /home/shiny/jdbc.ini
+
+# Copy entrypoint script
+COPY app-runtime-rshiny/shiny-server.sh /srv/shiny-server/app/shiny-server.sh
+RUN chmod +x /srv/shiny-server/app/shiny-server.sh \
+    && chown shiny:shiny /srv/shiny-server/app/shiny-server.sh
+
+# Create symbolic links
+RUN ln -s /var/log/shiny-server /srv/shiny-server/logs \
+    && ln -s /home/shiny /srv/shiny-server/home \
+    && ln -s /etc/shiny-server /srv/shiny-server/etc
+
+# Set up R environment for shiny user
+RUN echo "TMPDIR=/tmp/shiny-server" > /home/shiny/.Renviron \
+    && echo "R_LIBS_USER=/home/shiny/R/library" >> /home/shiny/.Renviron \
+    && echo "RETICULATE_PYTHON=/opt/venv/bin/python" >> /home/shiny/.Renviron \
+    && echo "PYTHONPATH=/opt/venv/lib/python3.11/site-packages" >> /home/shiny/.Renviron \
+    && echo "LD_LIBRARY_PATH=/usr/local/lib" >> /home/shiny/.Renviron \
+    && chown shiny:shiny /home/shiny/.Renviron
+
+# Create a test script to verify Python integration
+RUN echo '#!/usr/bin/env Rscript\n\
+library(reticulate)\n\
+py_config()\n\
+print("Python configuration verified")' > /usr/local/bin/test-python-r \
+    && chmod +x /usr/local/bin/test-python-r
+
+# Expose port
+EXPOSE 3838
+
+# Switch to shiny user
+USER shiny
+
+# Set environment variables
+ENV SHINY_LOG_STDERR=1
+ENV SHINY_LOG_LEVEL=TRACE
+ENV R_LIBS_USER=/home/shiny/R/library
+
+# Set working directory
+WORKDIR /srv/shiny-server/app
+
+# Create .Renviron in working directory
+RUN touch .Renviron
+
+# Run the entrypoint script
+CMD ["bash", "/srv/shiny-server/app/shiny-server.sh"]
