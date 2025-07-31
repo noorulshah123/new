@@ -1,0 +1,109 @@
+You're absolutely right. Let me carefully review your working Dockerfile and incorporate all the missing components including Snowflake ODBC/JDBC installations, pip.conf, and other configurations while maintaining the permission fixes.Updated Dockerfile for Ubuntu 24.04 with Shiny ServerCode ∙ Version 2 # Use Ubuntu 24.04 as base image
+FROM ubuntu:24.04
+
+# Set environment variables
+ENV SF_LIB_of_Asset_Tool_V10.03 assets
+ENV DEBIAN_FRONTEND noninteractive
+ENV SNOWFLAKE_VERSION 3.13.34
+ENV SF_JDBC_VERSION 3.13.34
+ENV SNOWFLAKE_FILE snowflake_linux_x86Strategized Dockerfile updates for comprehensive R and server setup.1sI need to continue updating the Dockerfile with all the missing components. Let me add the rest of the R installation, Shiny Server installation, and most importantly, all the permission fixes and directory creation that were missing.Updated Dockerfile for Ubuntu 24.04 with Shiny ServerCode ∙ Version 3 # Install Shiny Server
+RUN wget --no-verbose https://download3.rstudio.org/ubuntu-18.04/x86_64/shiny-server-${SHINY_SERVER_VERSION}-amd64.deb \
+    -O ss-latest.deb && \
+    gdebi -n ss-latest.deb && \
+    rm ss-latest.deb
+
+# Create the shiny user anDiagnosed and reconstructed Dockerfile with comprehensive fixes.3sI notice there are still some issues with the Dockerfile. Let me fix:
+
+The R installation section needs to be properly added
+There are syntax errors in the R package installation commands
+The SNOWFLAKE_FILE variable wasn't defined before use
+There are duplicate package installations
+Need to fix the proper order of operations
+
+Let me create a completely new, clean version of the Dockerfile that incorporates everything properly.Let me create a complete, corrected Dockerfile that includes all the components from your working version plus the necessary permission fixes:Updated Dockerfile for Ubuntu 24.04 with Shiny ServerCode ∙ Version 4 # Use Ubuntu 24.04 as base image
+FROM ubuntu:24.04
+
+# Set environment variables
+ENV SF_LIB_of_Asset_Tool_V10.03 assets
+ENV DEBIAN_FRONTEND noninteractive
+
+# ARG for environment variable
+ARG SF_JDBC_VERSION="3.13.34"
+ARG SNOWFLAKE_VERSION="3.13.34"
+ARPondered creating shiny-server configuration file for Dockerfile.1sNow let me also create the shiny-server.conf file that should be used with this Dockerfile.Now let me update the shiny-server.conf file to match the rocker/shiny configuration:Shiny Server ConfigurationCode ∙ Version 2 # Instruct Shiny Server to run applications as the user "shiny"
+run_as shiny;
+
+# Preserve environment variables when running as a different user
+preserve_logs true;
+
+# Define a server that listens on port 3838
+server {
+  listen 3838;
+
+  # Define a loPondered creating missing pip.conf configuration file.1sI should also create a sample pip.conf file since it's referenced in the Dockerfile but wasn't provided.Let me also create a sample pip.conf file that you'll need:pip.conf configuration fileCode [global]
+trusted-host = pypi.org
+               pypi.python.org
+               files.pythonhosted.org
+index-url = https://pypi.org/simple/
+extra-index-url = https://pypi.python.org/simple/
+
+[install]
+trusted-host = pypi.org
+               pypi.pythonSketched potential directory structure for user's request.1sLet me also create an example directory structure that the user should follow:Summary of Changes and Key Points:
+1. Complete Package Installation
+
+Added all missing dependencies including Snowflake ODBC/JDBC drivers
+Included pip.conf configuration
+Python 3.11 installation from source
+Complete R package list with version downgrades
+
+2. Fixed Permission Issues
+
+Created a wrapper script (/usr/bin/shiny-server-wrapper.sh) that ensures all directories have proper permissions at runtime
+The wrapper runs as root initially but ensures shiny user owns all necessary directories
+Added bookmarks directory creation: /var/lib/shiny-server/bookmarks
+
+3. Directory Structure Required
+Your build directory should have this structure:
+.
+├── Dockerfile
+├── shiny-server.conf
+├── pip.conf
+├── cloudguard-root.crt
+├── app-runtime/
+│   └── artifacts/
+│       └── odbc.ini
+└── app-runtime-rshiny/
+    ├── artifacts/
+    │   └── odbc.ini
+    └── shiny-server.sh
+4. Key Differences from Original
+
+Wrapper Script: The main difference is the addition of a wrapper script that runs at container startup to ensure permissions are correct
+Runtime Permission Fix: Instead of only setting permissions at build time, we ensure they're correct at runtime
+User Management: The container starts as root but the wrapper ensures shiny-server runs as the shiny user
+Bookmarks Directory: Specifically creates the bookmarks directory that was causing your error
+
+5. Build and Run Commands
+bash# Build the image
+docker build -t shiny-ubuntu:24.04 .
+
+# Run the container
+docker run -d -p 3838:3838 \
+  -e APPLICATION_LOGS_TO_STDOUT=true \
+  -e SHINY_LOG_STDERR=1 \
+  -v /path/to/your/apps:/srv/shiny-server \
+  -v /path/to/logs:/var/log/shiny-server \
+  shiny-ubuntu:24.04
+
+# For debugging
+docker run -it -p 3838:3838 shiny-ubuntu:24.04 /bin/bash
+6. ECS Considerations
+For ECS, make sure your task definition includes:
+
+Proper IAM role with S3 access for apps.yml
+Environment variables for AWS credentials if needed
+Health check pointing to /
+Sufficient memory allocation (at least 2GB recommended)
+
+The main issue in your original setup was that the shiny user didn't have write permissions to create the bookmarks directory at runtime. The rocker/shiny image handles this by using a combination of proper directory creation and a startup script that ensures permissions are correct. This updated Dockerfile follows the same pattern while using Ubuntu 24.04 as the base.
