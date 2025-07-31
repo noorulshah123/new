@@ -1,0 +1,259 @@
+# Use Ubuntu 24.04 as base image
+FROM ubuntu:24.04
+
+# Set environment variables
+ENV SF_LIB_of_Asset_Tool_V10.03 assets
+ENV DEBIAN_FRONTEND noninteractive
+
+# ARG for environment variable
+ARG SF_JDBC_VERSION="3.13.34"
+ARG SNOWFLAKE_VERSION="3.13.34"
+ARG SF_JDBC_FILE="snowflake-jdbc-${SF_JDBC_VERSION}.jar"
+ARG SNOWFLAKE_FILE="snowflake_linux_x8664_odbc-${SNOWFLAKE_VERSION}.tgz"
+ARG PYTHON_VERSION="3.11.5"
+
+# Install OS dependencies
+RUN apt-get update && apt-get install -y \
+    sudo \
+    gdebi-core \
+    pandoc \
+    pandoc-citeproc \
+    libcurl4-gnutls-dev \
+    libcairo2-dev \
+    libxt-dev \
+    xtail \
+    wget \
+    curl \
+    ca-certificates \
+    software-properties-common \
+    gnupg2 \
+    lsb-release \
+    build-essential \
+    libssl-dev \
+    libxml2-dev \
+    libfontconfig1-dev \
+    libharfbuzz-dev \
+    libfribidi-dev \
+    libfreetype6-dev \
+    libpng-dev \
+    libtiff5-dev \
+    libjpeg-dev \
+    git \
+    unixodbc \
+    unixodbc-dev \
+    r-cran-rodbc \
+    libfontconfig1-dev \
+    libcurl4-openssl-dev \
+    libxml2-dev \
+    libharfbuzz-dev \
+    libfribidi-dev \
+    curl \
+    unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Add cloudguard root cert
+COPY cloudguard-root.crt /usr/local/share/ca-certificates/cloudguard-root.crt
+RUN update-ca-certificates
+
+# Install R from CRAN
+RUN wget -qO- https://cloud.r-project.org/bin/linux/ubuntu/marutter_pubkey.asc | \
+    gpg --dearmor -o /usr/share/keyrings/r-project.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/r-project.gpg] https://cloud.r-project.org/bin/linux/ubuntu noble-cran40/" | \
+    tee -a /etc/apt/sources.list.d/r-project.list && \
+    apt-get update && \
+    apt-get install -y r-base r-base-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+# Copy pip.conf for pip configuration
+COPY pip.conf /etc/pip.conf
+
+# Install Python 3.11 from source
+RUN wget -q https://www.python.org/ftp/python/3.11.8/Python-3.11.8.tgz && \
+    tar -xvf Python-3.11.8.tgz && \
+    cd Python-3.11.8 && \
+    ./configure --enable-optimizations && \
+    make -j $(nproc) && \
+    make altinstall && \
+    cd .. && rm -rf Python-3.11.8 Python-3.11.8.tgz
+
+# Set Python 3.11 as default
+RUN ln -sf /usr/local/bin/python3.11 /usr/bin/python && \
+    ln -sf /usr/local/bin/python3.11 /usr/bin/python3
+
+# Create virtual environment
+RUN python3.11 -m venv /opt/venv
+ENV VIRTUAL_ENV="/opt/venv"
+ENV PATH="/opt/venv/bin:$PATH"
+ENV RETICULATE_PYTHON="/opt/venv/bin/python3"
+
+# Verify Python installation
+RUN python --version && echo "✓ Python 3.11 Version Verified!"
+
+# Upgrade pip and install Python modules  
+RUN pip install --upgrade pip certifi pyglib2
+RUN pip install pip3 install awscli
+
+# Install Sagemaker python modules
+RUN pip3 install sagemaker==2.2.16 bhp-sagemaker==2.2.16
+
+# Install Java
+RUN apt-get update && apt-get install -y openjdk-11-jdk && \
+    rm -rf /var/lib/apt/lists/*
+ENV JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
+RUN R CMD javareconf
+
+# Install Snowflake ODBC driver with validation
+RUN mkdir -p /usr/lib/snowflake && cd /usr/lib/snowflake && \
+    curl -k -f "https://sfc-repo.snowflakecomputing.com/odbc/linux/${SNOWFLAKE_VERSION}/${SNOWFLAKE_FILE}" \
+    -o "${SNOWFLAKE_FILE}" && \
+    if [ ! -f "${SNOWFLAKE_FILE}" ]; then echo "✗ Error: Snowflake ODBC driver not downloaded!"; exit 1; fi && \
+    tar xf ${SNOWFLAKE_FILE} && \
+    mv snowflake_odbc odbc && \
+    ./odbc/unixodbc_setup.sh && \
+    rm -f ${SNOWFLAKE_FILE}
+
+# Snowflake JDBC driver  
+RUN mkdir -p /usr/lib/snowflake/jdbc && cd /usr/lib/snowflake/jdbc && \
+    curl -L "https://repo1.maven.org/maven2/net/snowflake/snowflake-jdbc/${SF_JDBC_VERSION}/${SF_JDBC_FILE}" \
+    -o "${SF_JDBC_FILE}"
+
+# Copy ODBC configuration files
+COPY --chown=shiny:shiny --chmod=644 app-runtime/artifacts/odbc.ini /etc/odbc.ini
+COPY app-runtime-rshiny/artifacts/odbc.ini /home/shiny/odbc.ini
+
+# Update ODBC InstLib path
+RUN sed -i "s/ODBCInstLib=\\/usr\\/lib64\\/libodbcinst.so.2/ODBCInstLib=\\/usr\\/lib\\/x86_64-linux-gnu\\/libodbcinst.so.2/g" /usr/lib/snowflake/odbc/lib/simba.snowflake.ini
+
+# Show ODBC set up
+RUN echo "ODBC set up ******************************" && \
+    cat /usr/lib/snowflake/odbc/lib/simba.snowflake.ini
+
+# Install R packages
+RUN R -e 'install.packages(c("devtools", "bslib", "shinyWidgets", \
+    "anytime", "dplyr", "DT", "fastmap", "ggplot2", "glue", \
+    "htmltools", "httr", "jsonlite", "lubridate", "odbc", \
+    "openxlsx", "plotly", "purrr", "R.utils", "reshape2", \
+    "reticulate", "rhandsontable", "RJDBC", "RODBC", \
+    "sass", "shiny", "shinyBS", "shinycssloaders", "shinylogs", \
+    "stringr", "tidyr", "utils", "uuid", "withr"), \
+    repos = "https://cran.rstudio.com/")'
+
+# Downgrade specific R packages
+RUN R -e "devtools::install_version('bslib', '0.6.0', repos = 'https://cran.rstudio.com/')"
+RUN R -e "devtools::install_version('shinyWidgets', version = '0.8.2', repos = 'https://cran.rstudio.com/', upgrade = FALSE)"
+
+# Install AWS CLI from official source
+RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" && \
+    unzip awscliv2.zip && \
+    ./aws/install && \
+    rm -rf awscliv2.zip aws
+
+# Install Shiny Server
+RUN wget --no-verbose https://download3.rstudio.org/ubuntu-18.04/x86_64/shiny-server-1.5.22.1017-amd64.deb \
+    -O ss-latest.deb && \
+    gdebi -n ss-latest.deb && \
+    rm ss-latest.deb
+
+# Create the shiny user and group manually (if not created by shiny-server install)
+RUN getent group shiny || groupadd -r shiny && \
+    getent passwd shiny || useradd -r -g shiny -m -d /home/shiny shiny
+
+# Create necessary directories
+RUN mkdir -p /var/lib/shiny-server/bookmarks && \
+    mkdir -p /var/log/shiny-server && \
+    mkdir -p /srv/shiny-server/app && \
+    mkdir -p /home/shiny && \
+    mkdir -p /var/run/shiny-server && \
+    mkdir -p /tmp/shiny-server && \
+    mkdir -p /etc/shiny-server
+
+# Copy app files to image
+COPY app-runtime-rshiny/shiny-server.sh /srv/shiny-server/app/
+RUN chmod +x /srv/shiny-server/app/shiny-server.sh
+
+# Copy app files (if you have more app files)
+COPY . /srv/shiny-server/app/
+
+# Make app files readable and executable
+RUN chmod -R +r /srv/shiny-server/app && \
+    chmod -R 755 /srv/shiny-server/app
+
+# Set ownership for all Shiny directories
+RUN chown -R shiny:shiny /var/lib/shiny-server && \
+    chown -R shiny:shiny /var/log/shiny-server && \
+    chown -R shiny:shiny /srv/shiny-server && \
+    chown -R shiny:shiny /home/shiny && \
+    chown -R shiny:shiny /var/run/shiny-server && \
+    chown -R shiny:shiny /tmp/shiny-server
+
+# Make sure the shiny user can write to necessary directories
+RUN chmod -R 775 /var/lib/shiny-server && \
+    chmod -R 775 /var/log/shiny-server && \
+    chmod -R 775 /srv/shiny-server && \
+    chmod 774 /home/shiny
+
+# Add debug line for environment variables
+RUN echo 'echo "Environment Variables at Runtime: $(env | grep S3_)"' >> /srv/shiny-server/app/shiny-server.sh
+
+# Provide links to dirs we want to serve
+RUN ln -s /var/log/shiny-server /srv/shiny-server/logs && \
+    ln -s /home/shiny /srv/shiny-server/home && \
+    ln -s /etc/shiny-server /srv/shiny-server/etc
+
+# Expose port 3838
+EXPOSE 3838
+
+# Copy Shiny Server configuration
+COPY shiny-server.conf /etc/shiny-server/shiny-server.conf
+
+# Create shiny-server wrapper script to ensure permissions at runtime
+RUN cat > /usr/bin/shiny-server-wrapper.sh << 'EOF'
+#!/bin/bash
+
+# Ensure all directories exist with proper permissions at runtime
+mkdir -p /var/log/shiny-server
+mkdir -p /var/lib/shiny-server/bookmarks
+mkdir -p /var/run/shiny-server
+
+# Set ownership
+chown -R shiny:shiny /var/log/shiny-server
+chown -R shiny:shiny /var/lib/shiny-server
+chown -R shiny:shiny /var/run/shiny-server
+chown -R shiny:shiny /srv/shiny-server
+
+# Set permissions
+chmod -R 775 /var/lib/shiny-server
+chmod -R 775 /var/log/shiny-server
+
+# Push logs to stdout if requested
+if [ "$APPLICATION_LOGS_TO_STDOUT" != "false" ]; then
+    exec xtail /var/log/shiny-server/ &
+fi
+
+# Debug output
+echo "Starting Shiny Server..."
+echo "SHINY_LOG_STDERR: $SHINY_LOG_STDERR"
+echo "Current user: $(whoami)"
+echo "Shiny Server version: $(shiny-server --version)"
+
+# Start shiny server
+exec shiny-server 2>&1
+EOF
+
+RUN chmod +x /usr/bin/shiny-server-wrapper.sh
+
+# Set working directory
+WORKDIR /home/shiny/
+
+# Create .Renviron file
+RUN touch /home/shiny/.Renviron && chown shiny:shiny /home/shiny/.Renviron
+
+# Environment variables
+ENV SHINY_LOG_STDERR=1
+ENV APPLICATION_LOGS_TO_STDOUT=true
+
+# Switch to root for startup (wrapper will handle permissions)
+USER root
+
+# Run the wrapper script
+CMD ["/usr/bin/shiny-server-wrapper.sh"]
