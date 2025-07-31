@@ -1,0 +1,236 @@
+# Use Ubuntu 24.04 as base image
+FROM ubuntu:24.04
+
+# Set environment variables
+ENV SF_LIB_of_Asset_Tool_V10.03 assets
+ENV DEBIAN_FRONTEND noninteractive
+ENV SHINY_SERVER_VERSION 1.5.22.1017
+ENV R_VERSION 4.4.2
+
+# Update and install base dependencies
+RUN apt-get update && apt-get install -y \
+    sudo \
+    gdebi-core \
+    pandoc \
+    pandoc-citeproc \
+    libcurl4-gnutls-dev \
+    libcairo2-dev \
+    libxt-dev \
+    xtail \
+    wget \
+    curl \
+    ca-certificates \
+    software-properties-common \
+    gnupg2 \
+    lsb-release \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install R
+RUN wget -qO- https://cloud.r-project.org/bin/linux/ubuntu/marutter_pubkey.asc | \
+    sudo gpg --dearmor -o /usr/share/keyrings/r-project.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/r-project.gpg] https://cloud.r-project.org/bin/linux/ubuntu noble-cran40/" | \
+    sudo tee -a /etc/apt/sources.list.d/r-project.list && \
+    apt-get update && \
+    apt-get install -y r-base=${R_VERSION}* r-base-dev=${R_VERSION}* && \
+    rm -rf /var/lib/apt/lists/*
+
+# Set R environment variables
+ENV R_HOME /usr/lib/R
+ENV PATH ${R_HOME}/bin:${PATH}
+
+# Install development tools and libraries
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    libcurl4-openssl-dev \
+    libssl-dev \
+    libxml2-dev \
+    libfontconfig1-dev \
+    libharfbuzz-dev \
+    libfribidi-dev \
+    libfreetype6-dev \
+    libpng-dev \
+    libtiff5-dev \
+    libjpeg-dev \
+    git \
+    unixodbc \
+    unixodbc-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python 3.11
+RUN apt-get update && apt-get install -y \
+    python3.11 \
+    python3.11-venv \
+    python3-pip \
+    python3.11-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set Python 3.11 as default
+RUN ln -sf /usr/bin/python3.11 /usr/bin/python3 && \
+    ln -sf /usr/bin/python3.11 /usr/bin/python
+
+# Create virtual environment
+ENV VIRTUAL_ENV /opt/venv
+RUN python3 -m venv $VIRTUAL_ENV
+ENV PATH "$VIRTUAL_ENV/bin:$PATH"
+
+# Upgrade pip and install Python packages
+RUN pip install --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir \
+    numpy pandas matplotlib scikit-learn jupyter \
+    scipy plotly seaborn statsmodels
+
+# Install GitLab user and token
+ARG GITLAB_USER
+ARG GITLAB_TOKEN
+
+# Install Sagemaker Python modules
+RUN pip install sagemaker==2.2.16
+
+# Install Java
+ENV JAVA_HOME /usr/lib/jvm/java-11-openjdk-amd64
+RUN apt-get update && apt-get install -y openjdk-11-jdk && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install AWS CLI
+RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" && \
+    apt-get update && apt-get install -y unzip && \
+    unzip awscliv2.zip && \
+    ./aws/install && \
+    rm -rf awscliv2.zip aws && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install Snowflake ODBC driver
+ENV SNOWFLAKE_VERSION 3.13.34
+ENV SF_JDBC_VERSION 3.13.34
+ENV SF_JDBC_FILE snowflake-jdbc-${SF_JDBC_VERSION}.jar
+
+RUN mkdir -p /usr/lib/snowflake && \
+    cd /usr/lib/snowflake && \
+    curl -k -f "https://sfc-repo.snowflakecomputing.com/odbc/linux/${SNOWFLAKE_VERSION}/${SNOWFLAKE_FILE}" \
+    -o "${SNOWFLAKE_FILE}" && \
+    tar xf ${SNOWFLAKE_FILE} && \
+    mv snowflake_odbc odbc && \
+    ./odbc/unixodbc_setup.sh && \
+    rm -f ${SNOWFLAKE_FILE}
+
+# Copy snowflake ODBC driver with validation
+RUN set -e && \
+    cd /usr/lib/snowflake && \
+    sed -i "s/ODBCInstLib=\\/usr\\/lib64\\/libodbcinst.so.2/ODBCInstLib=\\/usr\\/lib\\/x86_64-linux-gnu\\/libodbcinst.so.2/g" /usr/lib/snowflake/odbc/lib/simba.snowflake.ini && \
+    cat /usr/lib/snowflake/odbc/lib/simba.snowflake.ini
+
+# Install R packages
+RUN R -e "install.packages(c('devtools', 'bslib', 'shinyWidgets', \
+    'sass', 'shiny', 'shinyBS', 'shinycssloaders', \
+    'shinylogs', 'stringr', 'tidyr', 'utils', 'uuid', 'withr'), \
+    repos = 'https://cran.rstudio.com/')"
+
+# Additional R packages
+RUN R -e "install.packages(c('devtools', 'anytime', 'dplyr', 'DT', \
+    'fastmap', 'ggplot2', 'glue', 'htmltools', 'httr', \
+    'jsonlite', 'lubridate', 'odbc', 'openxlsx', 'plotly', \
+    'purrr', 'R.utils', 'reshape2', 'reticulate', 'rhandsontable', \
+    'RJDBC', 'RODBC', 'htmltools', 'httr', 'jsonlite', 'lubridate', \
+    'odbc', 'shinygse', 'stringr', 'tidyr', 'utils', 'uuid', 'withr'), \
+    repos = 'https://cran.rstudio.com/')"
+
+# Set reticulate Python
+ENV RETICULATE_PYTHON /opt/venv/bin/python3
+
+# Install Shiny Server
+RUN wget --no-verbose https://download3.rstudio.org/ubuntu-18.04/x86_64/shiny-server-${SHINY_SERVER_VERSION}-amd64.deb \
+    -O ss-latest.deb && \
+    gdebi -n ss-latest.deb && \
+    rm ss-latest.deb
+
+# Create shiny user with proper UID/GID that doesn't conflict
+# First check if shiny user exists from the shiny-server installation
+RUN if ! id -u shiny >/dev/null 2>&1; then \
+        groupadd -r -g 1000 shiny && \
+        useradd -r -u 1000 -g shiny -m -d /home/shiny -s /bin/bash shiny; \
+    fi
+
+# Create necessary directories and set proper permissions
+RUN mkdir -p /var/lib/shiny-server/bookmarks && \
+    mkdir -p /var/log/shiny-server && \
+    mkdir -p /srv/shiny-server && \
+    mkdir -p /home/shiny && \
+    mkdir -p /var/run/shiny-server && \
+    mkdir -p /tmp/shiny-server && \
+    mkdir -p /etc/shiny-server
+
+# Set ownership for all Shiny directories
+RUN chown -R shiny:shiny /var/lib/shiny-server && \
+    chown -R shiny:shiny /var/log/shiny-server && \
+    chown -R shiny:shiny /srv/shiny-server && \
+    chown -R shiny:shiny /home/shiny && \
+    chown -R shiny:shiny /var/run/shiny-server && \
+    chown -R shiny:shiny /tmp/shiny-server
+
+# Make sure shiny user can write to necessary directories
+RUN chmod -R 775 /var/lib/shiny-server && \
+    chmod -R 775 /var/log/shiny-server && \
+    chmod -R 775 /srv/shiny-server
+
+# Copy app files to image
+RUN mkdir -p /srv/shiny-server/app
+COPY app-runtime-rshiny/shiny-server.sh /srv/shiny-server/app/
+RUN chmod +x /srv/shiny-server/app/shiny-server.sh && \
+    chown -R shiny:shiny /srv/shiny-server/app && \
+    chmod -R 755 /srv/shiny-server/app
+
+# Add debug line for environment variables
+RUN echo 'echo "Environment Variables at Runtime: $(env | grep S3_)" >> /srv/shiny-server/app/shiny-server.sh'
+
+# Provide links to dirs we want to serve
+RUN ln -s /var/log/shiny-server /srv/shiny-server/logs && \
+    ln -s /home/shiny /srv/shiny-server/home && \
+    ln -s /etc/shiny-server /srv/shiny-server/etc
+
+# Create shiny-server wrapper script
+RUN cat > /usr/bin/shiny-server.sh << 'EOF'
+#!/bin/bash
+
+# Make sure the directory for individual app logs exists
+mkdir -p /var/log/shiny-server
+chown shiny:shiny /var/log/shiny-server
+
+# Make sure bookmarks directory exists with proper permissions
+mkdir -p /var/lib/shiny-server/bookmarks/shiny
+chown -R shiny:shiny /var/lib/shiny-server
+
+# Ensure srv directory has proper permissions
+chown -R shiny:shiny /srv/shiny-server
+
+if [ "$APPLICATION_LOGS_TO_STDOUT" != "false" ]; then
+    # push the "real" application logs to stdout with xtail in detached mode
+    exec xtail /var/log/shiny-server/ &
+fi
+
+# Check environment variables for debugging
+echo "SHINY_LOG_STDERR: $SHINY_LOG_STDERR"
+echo "R_SHINY_PORT: ${R_SHINY_PORT:-3838}"
+echo "Starting Shiny Server..."
+
+# Start shiny server as the shiny user
+exec su - shiny -c "shiny-server 2>&1"
+EOF
+
+RUN chmod +x /usr/bin/shiny-server.sh
+
+# Expose port
+EXPOSE 3838
+
+# Copy Shiny configuration (if you have a custom one)
+# COPY shiny-server.conf /etc/shiny-server/shiny-server.conf
+
+# Set working directory
+WORKDIR /srv/shiny-server
+
+# Environment variables for runtime
+ENV SHINY_LOG_STDERR 1
+ENV APPLICATION_LOGS_TO_STDOUT true
+
+# Run app
+USER root
+CMD ["/usr/bin/shiny-server.sh"]
