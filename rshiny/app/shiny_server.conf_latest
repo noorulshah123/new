@@ -1,0 +1,33 @@
+# Instruct Shiny Server to run applications as the user "shiny"
+run_as shiny;
+
+# Preserve environment variables when running as a different user
+preserve_logs true;
+
+# Define a server that listens on port 3838
+server {
+  listen 3838;
+
+  # Define a location at the base URL
+  location / {
+
+    # Host the directory of Shiny Apps stored in this directory
+    site_dir /srv/shiny-server;
+
+    # Log all Shiny output to files in this directory
+    log_dir /var/log/shiny-server;
+
+    # When a user visits the base URL rather than a particular application,
+    # an index of the applications available in this directory will be shown.
+    directory_index on;
+    
+    # Extend the timeout for apps to start
+    app_init_timeout 300;
+    
+    # Extend the timeout for apps to become idle
+    app_idle_timeout 1800;
+    
+    # Enable bookmarking state
+    bookmark_state_dir /var/lib/shiny-server/bookmarks;
+  }
+}
