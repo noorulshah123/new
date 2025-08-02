@@ -1,0 +1,484 @@
+# syntax=docker/dockerfile:1
+
+FROM docker.io/library/ubuntu:24.04
+
+# Set environment variables (matching rocker pattern)
+ENV R_VERSION="4.4.2"
+ENV R_HOME="/usr/local/lib/R"
+ENV TZ="Etc/UTC"
+
+# First, create the rocker scripts directory structure
+RUN mkdir -p /rocker_scripts
+
+# Create install_R_source.sh script
+RUN cat > /rocker_scripts/install_R_source.sh << 'EOF'
+#!/bin/bash
+set -e
+
+R_VERSION=${1:-${R_VERSION:-"4.4.2"}}
+
+# shellcheck source=/dev/null
+source /etc/os-release
+
+apt-get update
+apt-get -y install locales
+
+## Configure default locale
+LANG=${LANG:-"en_US.UTF-8"}
+/usr/sbin/locale-gen --lang "${LANG}"
+/usr/sbin/update-locale --reset LANG="${LANG}"
+
+export DEBIAN_FRONTEND=noninteractive
+
+R_HOME=${R_HOME:-"/usr/local/lib/R"}
+
+READLINE_VERSION=8
+
+apt-get install -y --no-install-recommends \
+    bash-completion \
+    ca-certificates \
+    file \
+    fonts-texgyre \
+    g++ \
+    gfortran \
+    gsfonts \
+    libblas-dev \
+    libbz2-* \
+    libcurl4 \
+    libicu* \
+    liblapack-dev \
+    libpcre2* \
+    libjpeg-turbo* \
+    libpangocairo-* \
+    libpng16* \
+    "libreadline${READLINE_VERSION}" \
+    libtiff* \
+    liblzma* \
+    make \
+    tzdata \
+    unzip \
+    zip \
+    zlib1g
+
+BUILDDEPS="curl \
+    default-jdk \
+    devscripts \
+    libbz2-dev \
+    libcairo2-dev \
+    libcurl4-openssl-dev \
+    libpango1.0-dev \
+    libjpeg-dev \
+    libicu-dev \
+    libpcre2-dev \
+    libpng-dev \
+    libreadline-dev \
+    libtiff5-dev \
+    liblzma-dev \
+    libx11-dev \
+    libxt-dev \
+    perl \
+    rsync \
+    subversion \
+    tcl-dev \
+    tk-dev \
+    texinfo \
+    texlive-extra-utils \
+    texlive-fonts-recommended \
+    texlive-fonts-extra \
+    texlive-latex-recommended \
+    texlive-latex-extra \
+    x11proto-core-dev \
+    xauth \
+    xfonts-base \
+    xvfb \
+    wget \
+    zlib1g-dev"
+
+apt-get install -y --no-install-recommends $BUILDDEPS
+
+## Download R from 0-Cloud CRAN mirror
+cd /tmp
+wget https://cran.rstudio.com/src/base/R-4/R-${R_VERSION}.tar.gz
+tar -xf R-${R_VERSION}.tar.gz
+cd R-${R_VERSION}
+
+## Set compiler flags
+R_PAPERSIZE=letter
+R_BATCHSAVE="--no-save --no-restore"
+R_BROWSER=xdg-open
+PAGER=/usr/bin/pager
+PERL=/usr/bin/perl
+R_UNZIPCMD=/usr/bin/unzip
+R_ZIPCMD=/usr/bin/zip
+R_PRINTCMD=/usr/bin/lpr
+LIBnn=lib
+AWK=/usr/bin/awk
+CFLAGS="-g -O2 -fstack-protector-strong -Wformat -Werror=format-security -Wdate-time -D_FORTIFY_SOURCE=2 -g"
+CXXFLAGS="-g -O2 -fstack-protector-strong -Wformat -Werror=format-security -Wdate-time -D_FORTIFY_SOURCE=2 -g"
+
+## Configure and build R
+./configure --enable-R-shlib \
+    --enable-memory-profiling \
+    --with-readline \
+    --with-blas \
+    --with-lapack \
+    --with-tcltk \
+    --disable-nls \
+    --with-recommended-packages
+
+make -j$(nproc)
+make install
+make clean
+
+## Add a library directory (for user-installed packages)
+mkdir -p ${R_HOME}/site-library
+chown root:staff ${R_HOME}/site-library
+chmod g+ws ${R_HOME}/site-library
+
+## Fix library path
+echo "R_LIBS=\${R_LIBS-'${R_HOME}/site-library:${R_HOME}/library'}" >> ${R_HOME}/etc/Renviron.site
+
+## Clean up
+cd /
+rm -rf /tmp/*
+apt-get remove --purge -y $BUILDDEPS
+apt-get autoremove -y
+apt-get autoclean -y
+rm -rf /var/lib/apt/lists/*
+EOF
+
+RUN chmod +x /rocker_scripts/install_R_source.sh && \
+    /rocker_scripts/install_R_source.sh
+
+# Set CRAN and configure R
+ENV CRAN="https://cloud.r-project.org"
+ENV LANG=en_US.UTF-8
+
+# Create setup_R.sh script
+RUN cat > /rocker_scripts/setup_R.sh << 'EOF'
+#!/bin/bash
+set -e
+
+CRAN=${1:-${CRAN:-"https://cloud.r-project.org"}}
+
+## Add a default CRAN mirror
+echo "options(repos = c(CRAN = '${CRAN}'), download.file.method = 'libcurl')" >>"${R_HOME}/etc/Rprofile.site"
+
+## Set HTTPUserAgent for RSPM
+cat <<EOT >>"${R_HOME}/etc/Rprofile.site"
+options(HTTPUserAgent = sprintf("R/%s R (%s)", getRversion(), paste(getRversion(), R.version["platform"], R.version["arch"], R.version["os"])))
+EOT
+
+## Install littler
+Rscript -e "install.packages(c('littler', 'docopt'))"
+ln -s ${R_HOME}/site-library/littler/examples/install2.r /usr/local/bin/install2.r
+ln -s ${R_HOME}/site-library/littler/examples/installGithub.r /usr/local/bin/installGithub.r
+ln -s ${R_HOME}/site-library/littler/bin/r /usr/local/bin/r
+EOF
+
+RUN chmod +x /rocker_scripts/setup_R.sh && \
+    /rocker_scripts/setup_R.sh
+
+# Install additional system dependencies for your requirements
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    sudo \
+    gdebi-core \
+    pandoc \
+    pandoc-citeproc \
+    libcairo2-dev \
+    libxt-dev \
+    xtail \
+    wget \
+    curl \
+    libssl-dev \
+    libxml2-dev \
+    libfontconfig1-dev \
+    libharfbuzz-dev \
+    libfribidi-dev \
+    unixodbc \
+    unixodbc-dev \
+    r-cran-rodbc \
+    openjdk-11-jdk \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set Java environment
+ENV JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
+RUN R CMD javareconf
+
+# Install Python 3.11 from source (following rocker pattern)
+ENV PYTHON_VERSION=3.11.8
+ENV PYTHON_CONFIGURE_OPTS="--enable-shared"
+ENV RETICULATE_AUTOCONFIGURE="0"
+ENV VIRTUAL_ENV="/opt/venv"
+
+RUN cat > /rocker_scripts/install_python.sh << 'EOF'
+#!/bin/bash
+set -e
+
+apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libssl-dev \
+    zlib1g-dev \
+    libbz2-dev \
+    libreadline-dev \
+    libsqlite3-dev \
+    libncursesw5-dev \
+    xz-utils \
+    tk-dev \
+    libxml2-dev \
+    libxmlsec1-dev \
+    libffi-dev \
+    liblzma-dev
+
+cd /tmp
+wget https://www.python.org/ftp/python/${PYTHON_VERSION}/Python-${PYTHON_VERSION}.tgz
+tar -xf Python-${PYTHON_VERSION}.tgz
+cd Python-${PYTHON_VERSION}
+./configure ${PYTHON_CONFIGURE_OPTS} --prefix=/usr/local
+make -j$(nproc)
+make altinstall
+
+ln -sf /usr/local/bin/python3.11 /usr/bin/python
+ln -sf /usr/local/bin/python3.11 /usr/bin/python3
+ln -sf /usr/local/bin/pip3.11 /usr/bin/pip
+ln -sf /usr/local/bin/pip3.11 /usr/bin/pip3
+
+python3 -m venv ${VIRTUAL_ENV}
+
+cd /
+rm -rf /tmp/Python-${PYTHON_VERSION}*
+EOF
+
+RUN chmod +x /rocker_scripts/install_python.sh && \
+    /rocker_scripts/install_python.sh
+
+# Activate virtual environment
+ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
+
+# Copy pip configuration
+COPY pip.conf /etc/pip.conf
+
+# Install Python packages
+RUN pip install --upgrade pip setuptools wheel && \
+    pip install certifi pyglib2 && \
+    pip install awscli && \
+    pip install sagemaker==2.2.16 bhp-sagemaker==2.2.16
+
+# Install AWS CLI v2
+RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" && \
+    unzip awscliv2.zip && \
+    ./aws/install && \
+    rm -rf awscliv2.zip aws
+
+# Add cloudguard certificate
+COPY cloudguard-root.crt /usr/local/share/ca-certificates/cloudguard-root.crt
+RUN update-ca-certificates
+
+# Install Snowflake drivers
+ARG SNOWFLAKE_VERSION="3.13.34"
+ARG SF_JDBC_VERSION="3.13.34"
+ARG SNOWFLAKE_FILE="snowflake_linux_x8664_odbc-${SNOWFLAKE_VERSION}.tgz"
+ARG SF_JDBC_FILE="snowflake-jdbc-${SF_JDBC_VERSION}.jar"
+
+# Snowflake ODBC
+RUN mkdir -p /usr/lib/snowflake && cd /usr/lib/snowflake && \
+    curl -k -f "https://sfc-repo.snowflakecomputing.com/odbc/linux/${SNOWFLAKE_VERSION}/${SNOWFLAKE_FILE}" \
+    -o "${SNOWFLAKE_FILE}" && \
+    tar xf ${SNOWFLAKE_FILE} && \
+    mv snowflake_odbc odbc && \
+    ./odbc/unixodbc_setup.sh && \
+    rm -f ${SNOWFLAKE_FILE} && \
+    sed -i "s/ODBCInstLib=\\/usr\\/lib64\\/libodbcinst.so.2/ODBCInstLib=\\/usr\\/lib\\/x86_64-linux-gnu\\/libodbcinst.so.2/g" /usr/lib/snowflake/odbc/lib/simba.snowflake.ini
+
+# Snowflake JDBC
+RUN mkdir -p /usr/lib/snowflake/jdbc && cd /usr/lib/snowflake/jdbc && \
+    curl -L "https://repo1.maven.org/maven2/net/snowflake/snowflake-jdbc/${SF_JDBC_VERSION}/${SF_JDBC_FILE}" \
+    -o "${SF_JDBC_FILE}"
+
+# Install R packages
+RUN install2.r --error --skipinstalled \
+    devtools \
+    bslib \
+    shinyWidgets \
+    anytime \
+    dplyr \
+    DT \
+    fastmap \
+    ggplot2 \
+    glue \
+    htmltools \
+    httr \
+    jsonlite \
+    lubridate \
+    odbc \
+    openxlsx \
+    plotly \
+    purrr \
+    R.utils \
+    reshape2 \
+    reticulate \
+    rhandsontable \
+    RJDBC \
+    RODBC \
+    sass \
+    shiny \
+    shinyBS \
+    shinycssloaders \
+    shinylogs \
+    stringr \
+    tidyr \
+    utils \
+    uuid \
+    withr
+
+# Downgrade specific packages
+RUN R -e "devtools::install_version('bslib', '0.6.0', repos = 'https://cran.rstudio.com/')"
+RUN R -e "devtools::install_version('shinyWidgets', version = '0.8.2', repos = 'https://cran.rstudio.com/', upgrade = FALSE)"
+
+# Set reticulate Python
+ENV RETICULATE_PYTHON="${VIRTUAL_ENV}/bin/python3"
+
+# Install S6 init system
+ENV S6_VERSION="v2.1.0.2"
+ENV SHINY_SERVER_VERSION="1.5.22.1017"
+ENV PANDOC_VERSION="default"
+
+# Create install_s6init.sh script
+RUN cat > /rocker_scripts/install_s6init.sh << 'EOF'
+#!/bin/bash
+set -e
+
+apt-get update && apt-get install -y --no-install-recommends curl ca-certificates
+
+# Install s6-overlay
+ARCH=$(uname -m)
+if [ "$ARCH" = "x86_64" ]; then
+    S6_ARCH="amd64"
+elif [ "$ARCH" = "aarch64" ]; then
+    S6_ARCH="aarch64"
+fi
+
+curl -L https://github.com/just-containers/s6-overlay/releases/download/${S6_VERSION}/s6-overlay-${S6_ARCH}.tar.gz | tar xz -C /
+curl -L https://github.com/just-containers/s6-overlay/releases/download/${S6_VERSION}/s6-overlay-${S6_ARCH}-installer | bash
+
+# Create init scripts directory
+mkdir -p /etc/services.d/shiny-server
+mkdir -p /etc/cont-init.d
+mkdir -p /var/run/s6
+
+rm -rf /var/lib/apt/lists/*
+EOF
+
+RUN chmod +x /rocker_scripts/install_s6init.sh && \
+    /rocker_scripts/install_s6init.sh
+
+# Create install_shiny_server.sh script
+RUN cat > /rocker_scripts/install_shiny_server.sh << 'EOF'
+#!/bin/bash
+set -e
+
+SHINY_SERVER_VERSION=${1:-${SHINY_SERVER_VERSION:-"1.5.22.1017"}}
+
+# Download and install shiny server
+wget --no-verbose "https://download3.rstudio.org/ubuntu-18.04/x86_64/shiny-server-${SHINY_SERVER_VERSION}-amd64.deb" -O ss-latest.deb
+gdebi -n ss-latest.deb
+rm ss-latest.deb
+
+# Create shiny user if not exists
+if ! id -u shiny >/dev/null 2>&1; then
+    useradd -r -m -d /home/shiny shiny
+fi
+
+# Create necessary directories
+mkdir -p /var/log/shiny-server
+mkdir -p /srv/shiny-server
+mkdir -p /var/lib/shiny-server
+mkdir -p /etc/shiny-server
+
+# Set up permissions
+chown -R shiny:shiny /var/log/shiny-server
+chown -R shiny:shiny /srv/shiny-server
+chown -R shiny:shiny /var/lib/shiny-server
+
+# Install Shiny R package
+R -e "install.packages('shiny')"
+
+# Setup for s6
+mkdir -p /etc/services.d/shiny-server
+cat > /etc/services.d/shiny-server/run << 'EOT'
+#!/usr/bin/with-contenv bash
+## Do not start the default shiny-server
+## The entrypoint script will handle app launch
+exec /bin/true
+EOT
+chmod +x /etc/services.d/shiny-server/run
+
+# Create finish script
+cat > /etc/services.d/shiny-server/finish << 'EOT'
+#!/bin/bash
+exec /bin/true
+EOT
+chmod +x /etc/services.d/shiny-server/finish
+EOF
+
+RUN chmod +x /rocker_scripts/install_shiny_server.sh && \
+    /rocker_scripts/install_shiny_server.sh
+
+# Create init script for environment setup
+RUN cat > /etc/cont-init.d/01_set_env << 'EOF'
+#!/usr/bin/with-contenv bash
+
+# Ensure directories exist with correct permissions
+mkdir -p /var/log/shiny-server
+mkdir -p /var/lib/shiny-server/bookmarks
+mkdir -p /srv/shiny-server/app
+
+chown -R shiny:shiny /var/log/shiny-server
+chown -R shiny:shiny /var/lib/shiny-server
+chown -R shiny:shiny /srv/shiny-server
+
+# Set permissions
+chmod -R 755 /srv/shiny-server
+chmod -R 775 /var/lib/shiny-server
+chmod -R 775 /var/log/shiny-server
+
+# Export environment variables
+printenv | grep -E '^(SF_|AWS_|SNOWFLAKE_|S3_)' > /etc/environment
+EOF
+chmod +x /etc/cont-init.d/01_set_env
+
+# Copy the entrypoint script that will download from S3 and run the app
+COPY shiny-server-entrypoint.sh /srv/shiny-server/shiny-server-entrypoint.sh
+RUN chmod +x /srv/shiny-server/shiny-server-entrypoint.sh && \
+    chown shiny:shiny /srv/shiny-server/shiny-server-entrypoint.sh
+
+# Copy ODBC configuration templates
+COPY odbc.ini /etc/odbc.ini.template
+RUN chown shiny:shiny /etc/odbc.ini.template
+
+# Copy Shiny Server configuration
+COPY shiny-server.conf /etc/shiny-server/shiny-server.conf
+
+# Create .Renviron for shiny user
+RUN touch /home/shiny/.Renviron && chown shiny:shiny /home/shiny/.Renviron
+
+# Set environment variable
+ENV SF_LIB_of_Asset_Tool_V10.03=assets
+
+# Expose port
+EXPOSE 3838
+
+# Working directory
+WORKDIR /srv/shiny-server
+
+# Override the s6 service to use our entrypoint script
+RUN cat > /etc/services.d/shiny-server/run << 'EOF'
+#!/usr/bin/with-contenv bash
+## Run the entrypoint script that downloads from S3 and launches the app
+exec /srv/shiny-server/shiny-server-entrypoint.sh
+EOF
+chmod +x /etc/services.d/shiny-server/run
+
+# Use s6-overlay as init system
+CMD ["/init"]
