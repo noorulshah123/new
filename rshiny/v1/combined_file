@@ -1,0 +1,1206 @@
+# Complete Project Structure - Shiny S3 Docker
+
+## Full Directory Tree
+
+```
+shiny-s3-docker/
+├── Dockerfile
+├── shiny-server-entrypoint.sh
+├── shiny-server.conf
+├── pip.conf
+├── cloudguard-root.crt
+├── setup-build.sh
+├── test-docker-build.sh
+├── docker-compose.yml
+├── .env.example
+├── Makefile
+├── README.md
+├── rocker_scripts/
+│   ├── install_R_source.sh
+│   ├── setup_R.sh
+│   ├── install_python.sh
+│   ├── install_s6init.sh
+│   └── install_shiny_server.sh
+├── cont-init.d/
+│   └── 01_set_env
+├── services.d/
+│   └── shiny-server/
+│       ├── run
+│       └── finish
+├── app-runtime/
+│   └── artifacts/
+│       ├── odbc.ini
+│       └── jdbc.ini
+└── app-runtime-rshiny/
+    └── artifacts/
+        └── odbc.ini
+```
+
+## Step-by-Step Setup Instructions
+
+### 1. Create the main directory
+```bash
+mkdir shiny-s3-docker
+cd shiny-s3-docker
+```
+
+### 2. Create all subdirectories
+```bash
+mkdir -p rocker_scripts
+mkdir -p cont-init.d
+mkdir -p services.d/shiny-server
+mkdir -p app-runtime/artifacts
+mkdir -p app-runtime-rshiny/artifacts
+```
+
+### 3. Create each file with the content below
+
+---
+
+## FILE: Dockerfile
+
+```dockerfile
+# syntax=docker/dockerfile:1
+
+FROM docker.io/library/ubuntu:24.04
+
+# Set environment variables (matching rocker pattern)
+ENV R_VERSION="4.4.2"
+ENV R_HOME="/usr/local/lib/R"
+ENV TZ="Etc/UTC"
+
+# Create the rocker scripts directory structure
+RUN mkdir -p /rocker_scripts
+
+# Copy all the installation scripts
+COPY rocker_scripts/install_R_source.sh /rocker_scripts/install_R_source.sh
+COPY rocker_scripts/setup_R.sh /rocker_scripts/setup_R.sh
+COPY rocker_scripts/install_python.sh /rocker_scripts/install_python.sh
+COPY rocker_scripts/install_s6init.sh /rocker_scripts/install_s6init.sh
+COPY rocker_scripts/install_shiny_server.sh /rocker_scripts/install_shiny_server.sh
+
+# Make scripts executable
+RUN chmod +x /rocker_scripts/*.sh
+
+# Install R from source
+RUN /rocker_scripts/install_R_source.sh
+
+# Set CRAN and configure R
+ENV CRAN="https://cloud.r-project.org"
+ENV LANG=en_US.UTF-8
+
+# Setup R
+RUN /rocker_scripts/setup_R.sh
+
+# Install additional system dependencies for your requirements
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    sudo \
+    gdebi-core \
+    pandoc \
+    pandoc-citeproc \
+    libcairo2-dev \
+    libxt-dev \
+    xtail \
+    wget \
+    curl \
+    libssl-dev \
+    libxml2-dev \
+    libfontconfig1-dev \
+    libharfbuzz-dev \
+    libfribidi-dev \
+    unixodbc \
+    unixodbc-dev \
+    r-cran-rodbc \
+    openjdk-11-jdk \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set Java environment
+ENV JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
+RUN R CMD javareconf
+
+# Install Python 3.11 from source (following rocker pattern)
+ENV PYTHON_VERSION=3.11.8
+ENV PYTHON_CONFIGURE_OPTS="--enable-shared"
+ENV RETICULATE_AUTOCONFIGURE="0"
+ENV VIRTUAL_ENV="/opt/venv"
+
+# Install Python
+RUN /rocker_scripts/install_python.sh
+
+# Activate virtual environment
+ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
+
+# Copy pip configuration
+COPY pip.conf /etc/pip.conf
+
+# Install Python packages
+RUN pip install --upgrade pip setuptools wheel && \
+    pip install certifi pyglib2 && \
+    pip install awscli && \
+    pip install sagemaker==2.2.16 bhp-sagemaker==2.2.16
+
+# Install AWS CLI v2
+RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" && \
+    unzip awscliv2.zip && \
+    ./aws/install && \
+    rm -rf awscliv2.zip aws
+
+# Add cloudguard certificate
+COPY cloudguard-root.crt /usr/local/share/ca-certificates/cloudguard-root.crt
+RUN update-ca-certificates
+
+# Install Snowflake drivers
+ARG SNOWFLAKE_VERSION="3.13.34"
+ARG SF_JDBC_VERSION="3.13.34"
+ARG SNOWFLAKE_FILE="snowflake_linux_x8664_odbc-${SNOWFLAKE_VERSION}.tgz"
+ARG SF_JDBC_FILE="snowflake-jdbc-${SF_JDBC_VERSION}.jar"
+
+# Snowflake ODBC
+RUN mkdir -p /usr/lib/snowflake && cd /usr/lib/snowflake && \
+    curl -k -f "https://sfc-repo.snowflakecomputing.com/odbc/linux/${SNOWFLAKE_VERSION}/${SNOWFLAKE_FILE}" \
+    -o "${SNOWFLAKE_FILE}" && \
+    tar xf ${SNOWFLAKE_FILE} && \
+    mv snowflake_odbc odbc && \
+    ./odbc/unixodbc_setup.sh && \
+    rm -f ${SNOWFLAKE_FILE} && \
+    sed -i "s/ODBCInstLib=\\/usr\\/lib64\\/libodbcinst.so.2/ODBCInstLib=\\/usr\\/lib\\/x86_64-linux-gnu\\/libodbcinst.so.2/g" /usr/lib/snowflake/odbc/lib/simba.snowflake.ini
+
+# Snowflake JDBC
+RUN mkdir -p /usr/lib/snowflake/jdbc && cd /usr/lib/snowflake/jdbc && \
+    curl -L "https://repo1.maven.org/maven2/net/snowflake/snowflake-jdbc/${SF_JDBC_VERSION}/${SF_JDBC_FILE}" \
+    -o "${SF_JDBC_FILE}"
+
+# Install R packages
+RUN install2.r --error --skipinstalled \
+    devtools \
+    bslib \
+    shinyWidgets \
+    anytime \
+    dplyr \
+    DT \
+    fastmap \
+    ggplot2 \
+    glue \
+    htmltools \
+    httr \
+    jsonlite \
+    lubridate \
+    odbc \
+    openxlsx \
+    plotly \
+    purrr \
+    R.utils \
+    reshape2 \
+    reticulate \
+    rhandsontable \
+    RJDBC \
+    RODBC \
+    sass \
+    shiny \
+    shinyBS \
+    shinycssloaders \
+    shinylogs \
+    stringr \
+    tidyr \
+    utils \
+    uuid \
+    withr
+
+# Downgrade specific packages
+RUN R -e "devtools::install_version('bslib', '0.6.0', repos = 'https://cran.rstudio.com/')"
+RUN R -e "devtools::install_version('shinyWidgets', version = '0.8.2', repos = 'https://cran.rstudio.com/', upgrade = FALSE)"
+
+# Set reticulate Python
+ENV RETICULATE_PYTHON="${VIRTUAL_ENV}/bin/python3"
+
+# Install S6 init system
+ENV S6_VERSION="v2.1.0.2"
+ENV SHINY_SERVER_VERSION="1.5.22.1017"
+ENV PANDOC_VERSION="default"
+
+# Install S6 init
+RUN /rocker_scripts/install_s6init.sh
+
+# Install Shiny Server
+RUN /rocker_scripts/install_shiny_server.sh
+
+# Copy ODBC and JDBC configuration files (after shiny user is created)
+# Note: These files are optional. Comment out if you don't have them.
+COPY --chown=shiny:shiny --chmod=644 app-runtime/artifacts/odbc.ini /etc/odbc.ini
+COPY --chown=shiny:shiny --chmod=644 app-runtime-rshiny/artifacts/odbc.ini /home/shiny/odbc.ini
+COPY --chown=shiny:shiny --chmod=644 app-runtime/artifacts/jdbc.ini /home/shiny/jdbc.ini
+
+# Copy S6 init scripts
+COPY cont-init.d/01_set_env /etc/cont-init.d/01_set_env
+RUN chmod +x /etc/cont-init.d/01_set_env
+
+# Copy S6 service scripts
+COPY services.d/shiny-server/run /etc/services.d/shiny-server/run
+COPY services.d/shiny-server/finish /etc/services.d/shiny-server/finish
+RUN chmod +x /etc/services.d/shiny-server/run && \
+    chmod +x /etc/services.d/shiny-server/finish
+
+# Copy the entrypoint script that will download from S3 and run the app
+COPY shiny-server-entrypoint.sh /srv/shiny-server/shiny-server-entrypoint.sh
+RUN chmod +x /srv/shiny-server/shiny-server-entrypoint.sh && \
+    chown shiny:shiny /srv/shiny-server/shiny-server-entrypoint.sh
+
+# Copy Shiny Server configuration
+COPY shiny-server.conf /etc/shiny-server/shiny-server.conf
+
+# Create .Renviron for shiny user
+RUN touch /home/shiny/.Renviron && chown shiny:shiny /home/shiny/.Renviron
+
+# Set environment variable
+ENV SF_LIB_of_Asset_Tool_V10.03=assets
+
+# Expose port
+EXPOSE 3838
+
+# Working directory
+WORKDIR /srv/shiny-server
+
+# Use s6-overlay as init system
+CMD ["/init"]
+```
+
+---
+
+## FILE: shiny-server-entrypoint.sh
+
+```bash
+#!/usr/bin/with-contenv bash
+
+# Enable debug mode to see executed commands
+set -x
+
+echo "🚀 Starting Shiny Server setup..."
+
+# Load environment variables into R environment
+echo "📋 Loading environment variables..."
+echo AWS_CONTAINER_CREDENTIALS_RELATIVE_URI=$AWS_CONTAINER_CREDENTIALS_RELATIVE_URI >> /home/shiny/.Renviron
+echo AWS_EXECUTION_ENV=$AWS_EXECUTION_ENV >> /home/shiny/.Renviron
+echo AWS_REGION=$AWS_REGION >> /home/shiny/.Renviron
+echo ECS_AGENT_URI=$ECS_AGENT_URI >> /home/shiny/.Renviron
+echo ECS_CONTAINER_METADATA_URI=$ECS_CONTAINER_METADATA_URI >> /home/shiny/.Renviron
+echo ECS_CONTAINER_METADATA_URI_V4=$ECS_CONTAINER_METADATA_URI_V4 >> /home/shiny/.Renviron
+
+# Wait for environment variables to propagate
+echo "⏱ Waiting for environment variables to be available..."
+sleep 5
+
+# Validate if AWS CLI is installed
+if ! command -v aws &> /dev/null; then
+    echo "❌ ERROR: AWS CLI is not installed. Please install it before running this script."
+    exit 1
+fi
+
+# Show AWS CLI version
+echo "📦 AWS CLI Version:"
+aws --version
+
+# Validate if S3_BUCKET and S3_KEY are set
+if [[ -z "$S3_BUCKET" || -z "$S3_KEY" ]]; then
+    echo "❌ ERROR: S3_BUCKET and S3_KEY must be set as environment variables."
+    env | grep S3_  # Debugging environment variables
+    exit 1
+fi
+
+# Attempt to download the application from S3
+echo "📥 Downloading application from S3: s3://$S3_BUCKET/$S3_KEY"
+aws s3 sync s3://$S3_BUCKET/$S3_KEY /srv/shiny-server/app
+
+# Check if sync was successful
+if [ $? -ne 0 ]; then
+    echo "❌ ERROR: Failed to sync with S3."
+    exit 1
+fi
+
+# List downloaded files for debugging
+echo "📁 Downloaded files from S3:"
+ls -la /srv/shiny-server/app/
+
+# Set correct permissions
+echo "🔒 Setting file permissions..."
+chown -R shiny:shiny /srv/shiny-server/app
+chmod -R 755 /srv/shiny-server/app
+
+# Validate if Shiny Server is installed
+if [[ ! -f "/usr/bin/shiny-server" ]]; then
+    echo "❌ ERROR: Shiny Server binary not found at /usr/bin/shiny-server."
+    exit 1
+fi
+
+# Start Shiny Server
+echo "🚀 Starting Shiny Server..."
+
+# For S6 init system, we need to exec the shiny-server process
+# This allows S6 to properly manage the process
+exec /usr/bin/shiny-server 2>&1
+```
+
+---
+
+## FILE: shiny-server.conf
+
+```conf
+run_as shiny;
+server {
+  listen 3838;
+  location / {
+    site_dir /srv/shiny-server;
+    log_dir /var/log/shiny-server;
+    directory_index on;
+    app_init_timeout 300;
+    app_idle_timeout 1800;
+    bookmark_state_dir /var/lib/shiny-server/bookmarks;
+  }
+}
+```
+
+---
+
+## FILE: pip.conf
+
+```ini
+# pip.conf configuration file
+# This file configures pip to trust the standard Python package repositories
+# Add any additional index URLs or trusted hosts as needed
+
+[global]
+trusted-host = pypi.org
+               pypi.python.org
+               files.pythonhosted.org
+index-url = https://pypi.org/simple/
+
+# If you have a private PyPI repository, add it here:
+# extra-index-url = https://your-private-pypi.com/simple/
+
+[install]
+trusted-host = pypi.org
+               pypi.python.org
+               files.pythonhosted.org
+```
+
+---
+
+## FILE: cloudguard-root.crt
+
+```
+-----BEGIN CERTIFICATE-----
+# Place your actual CloudGuard root certificate content here
+# This is just a placeholder
+# The certificate should be in PEM format
+-----END CERTIFICATE-----
+```
+
+---
+
+## FILE: rocker_scripts/install_R_source.sh
+
+```bash
+#!/bin/bash
+set -e
+
+R_VERSION=${1:-${R_VERSION:-"4.4.2"}}
+
+# shellcheck source=/dev/null
+source /etc/os-release
+
+apt-get update
+apt-get -y install locales
+
+## Configure default locale
+LANG=${LANG:-"en_US.UTF-8"}
+/usr/sbin/locale-gen --lang "${LANG}"
+/usr/sbin/update-locale --reset LANG="${LANG}"
+
+export DEBIAN_FRONTEND=noninteractive
+
+R_HOME=${R_HOME:-"/usr/local/lib/R"}
+
+READLINE_VERSION=8
+
+apt-get install -y --no-install-recommends \
+    bash-completion \
+    ca-certificates \
+    file \
+    fonts-texgyre \
+    g++ \
+    gfortran \
+    gsfonts \
+    libblas-dev \
+    libbz2-* \
+    libcurl4 \
+    libicu* \
+    liblapack-dev \
+    libpcre2* \
+    libjpeg-turbo* \
+    libpangocairo-* \
+    libpng16* \
+    "libreadline${READLINE_VERSION}" \
+    libtiff* \
+    liblzma* \
+    make \
+    tzdata \
+    unzip \
+    zip \
+    zlib1g
+
+BUILDDEPS="curl \
+    default-jdk \
+    devscripts \
+    libbz2-dev \
+    libcairo2-dev \
+    libcurl4-openssl-dev \
+    libpango1.0-dev \
+    libjpeg-dev \
+    libicu-dev \
+    libpcre2-dev \
+    libpng-dev \
+    libreadline-dev \
+    libtiff5-dev \
+    liblzma-dev \
+    libx11-dev \
+    libxt-dev \
+    perl \
+    rsync \
+    subversion \
+    tcl-dev \
+    tk-dev \
+    texinfo \
+    texlive-extra-utils \
+    texlive-fonts-recommended \
+    texlive-fonts-extra \
+    texlive-latex-recommended \
+    texlive-latex-extra \
+    x11proto-core-dev \
+    xauth \
+    xfonts-base \
+    xvfb \
+    wget \
+    zlib1g-dev"
+
+apt-get install -y --no-install-recommends $BUILDDEPS
+
+## Download R from 0-Cloud CRAN mirror
+cd /tmp
+wget https://cran.rstudio.com/src/base/R-4/R-${R_VERSION}.tar.gz
+tar -xf R-${R_VERSION}.tar.gz
+cd R-${R_VERSION}
+
+## Set compiler flags
+R_PAPERSIZE=letter
+R_BATCHSAVE="--no-save --no-restore"
+R_BROWSER=xdg-open
+PAGER=/usr/bin/pager
+PERL=/usr/bin/perl
+R_UNZIPCMD=/usr/bin/unzip
+R_ZIPCMD=/usr/bin/zip
+R_PRINTCMD=/usr/bin/lpr
+LIBnn=lib
+AWK=/usr/bin/awk
+CFLAGS="-g -O2 -fstack-protector-strong -Wformat -Werror=format-security -Wdate-time -D_FORTIFY_SOURCE=2 -g"
+CXXFLAGS="-g -O2 -fstack-protector-strong -Wformat -Werror=format-security -Wdate-time -D_FORTIFY_SOURCE=2 -g"
+
+## Configure and build R
+./configure --enable-R-shlib \
+    --enable-memory-profiling \
+    --with-readline \
+    --with-blas \
+    --with-lapack \
+    --with-tcltk \
+    --disable-nls \
+    --with-recommended-packages
+
+make -j$(nproc)
+make install
+make clean
+
+## Add a library directory (for user-installed packages)
+mkdir -p ${R_HOME}/site-library
+chown root:staff ${R_HOME}/site-library
+chmod g+ws ${R_HOME}/site-library
+
+## Fix library path
+echo "R_LIBS=\${R_LIBS-'${R_HOME}/site-library:${R_HOME}/library'}" >> ${R_HOME}/etc/Renviron.site
+
+## Clean up
+cd /
+rm -rf /tmp/*
+apt-get remove --purge -y $BUILDDEPS
+apt-get autoremove -y
+apt-get autoclean -y
+rm -rf /var/lib/apt/lists/*
+```
+
+---
+
+## FILE: rocker_scripts/setup_R.sh
+
+```bash
+#!/bin/bash
+set -e
+
+CRAN=${1:-${CRAN:-"https://cloud.r-project.org"}}
+
+## Add a default CRAN mirror
+echo "options(repos = c(CRAN = '${CRAN}'), download.file.method = 'libcurl')" >>"${R_HOME}/etc/Rprofile.site"
+
+## Set HTTPUserAgent for RSPM
+cat <<EOT >>"${R_HOME}/etc/Rprofile.site"
+options(HTTPUserAgent = sprintf("R/%s R (%s)", getRversion(), paste(getRversion(), R.version["platform"], R.version["arch"], R.version["os"])))
+EOT
+
+## Install littler
+Rscript -e "install.packages(c('littler', 'docopt'))"
+ln -s ${R_HOME}/site-library/littler/examples/install2.r /usr/local/bin/install2.r
+ln -s ${R_HOME}/site-library/littler/examples/installGithub.r /usr/local/bin/installGithub.r
+ln -s ${R_HOME}/site-library/littler/bin/r /usr/local/bin/r
+```
+
+---
+
+## FILE: rocker_scripts/install_python.sh
+
+```bash
+#!/bin/bash
+set -e
+
+apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libssl-dev \
+    zlib1g-dev \
+    libbz2-dev \
+    libreadline-dev \
+    libsqlite3-dev \
+    libncursesw5-dev \
+    xz-utils \
+    tk-dev \
+    libxml2-dev \
+    libxmlsec1-dev \
+    libffi-dev \
+    liblzma-dev
+
+cd /tmp
+wget https://www.python.org/ftp/python/${PYTHON_VERSION}/Python-${PYTHON_VERSION}.tgz
+tar -xf Python-${PYTHON_VERSION}.tgz
+cd Python-${PYTHON_VERSION}
+./configure ${PYTHON_CONFIGURE_OPTS} --prefix=/usr/local
+make -j$(nproc)
+make altinstall
+
+ln -sf /usr/local/bin/python3.11 /usr/bin/python
+ln -sf /usr/local/bin/python3.11 /usr/bin/python3
+ln -sf /usr/local/bin/pip3.11 /usr/bin/pip
+ln -sf /usr/local/bin/pip3.11 /usr/bin/pip3
+
+python3 -m venv ${VIRTUAL_ENV}
+
+cd /
+rm -rf /tmp/Python-${PYTHON_VERSION}*
+```
+
+---
+
+## FILE: rocker_scripts/install_s6init.sh
+
+```bash
+#!/bin/bash
+set -e
+
+apt-get update && apt-get install -y --no-install-recommends curl ca-certificates
+
+# Install s6-overlay
+ARCH=$(uname -m)
+if [ "$ARCH" = "x86_64" ]; then
+    S6_ARCH="amd64"
+elif [ "$ARCH" = "aarch64" ]; then
+    S6_ARCH="aarch64"
+fi
+
+curl -L https://github.com/just-containers/s6-overlay/releases/download/${S6_VERSION}/s6-overlay-${S6_ARCH}.tar.gz | tar xz -C /
+curl -L https://github.com/just-containers/s6-overlay/releases/download/${S6_VERSION}/s6-overlay-${S6_ARCH}-installer | bash
+
+# Create init scripts directory
+mkdir -p /etc/services.d/shiny-server
+mkdir -p /etc/cont-init.d
+mkdir -p /var/run/s6
+
+rm -rf /var/lib/apt/lists/*
+```
+
+---
+
+## FILE: rocker_scripts/install_shiny_server.sh
+
+```bash
+#!/bin/bash
+set -e
+
+SHINY_SERVER_VERSION=${1:-${SHINY_SERVER_VERSION:-"1.5.22.1017"}}
+
+# Download and install shiny server
+wget --no-verbose "https://download3.rstudio.org/ubuntu-18.04/x86_64/shiny-server-${SHINY_SERVER_VERSION}-amd64.deb" -O ss-latest.deb
+gdebi -n ss-latest.deb
+rm ss-latest.deb
+
+# Create shiny user if not exists
+if ! id -u shiny >/dev/null 2>&1; then
+    useradd -r -m -d /home/shiny shiny
+fi
+
+# Create necessary directories
+mkdir -p /var/log/shiny-server
+mkdir -p /srv/shiny-server
+mkdir -p /var/lib/shiny-server
+mkdir -p /etc/shiny-server
+
+# Set up permissions
+chown -R shiny:shiny /var/log/shiny-server
+chown -R shiny:shiny /srv/shiny-server
+chown -R shiny:shiny /var/lib/shiny-server
+
+# Install Shiny R package
+R -e "install.packages('shiny')"
+
+# Setup for s6
+mkdir -p /etc/services.d/shiny-server
+```
+
+---
+
+## FILE: cont-init.d/01_set_env
+
+```bash
+#!/usr/bin/with-contenv bash
+
+# Ensure directories exist with correct permissions
+mkdir -p /var/log/shiny-server
+mkdir -p /var/lib/shiny-server/bookmarks
+mkdir -p /srv/shiny-server/app
+
+chown -R shiny:shiny /var/log/shiny-server
+chown -R shiny:shiny /var/lib/shiny-server
+chown -R shiny:shiny /srv/shiny-server
+chown -R shiny:shiny /home/shiny
+
+# Set permissions
+chmod -R 755 /srv/shiny-server
+chmod -R 775 /var/lib/shiny-server
+chmod -R 775 /var/log/shiny-server
+
+# Export environment variables
+printenv | grep -E '^(SF_|AWS_|SNOWFLAKE_|S3_|ECS_)' > /etc/environment
+```
+
+---
+
+## FILE: services.d/shiny-server/run
+
+```bash
+#!/usr/bin/with-contenv bash
+## Run the entrypoint script that downloads from S3 and launches the app
+exec /srv/shiny-server/shiny-server-entrypoint.sh
+```
+
+---
+
+## FILE: services.d/shiny-server/finish
+
+```bash
+#!/bin/bash
+exec /bin/true
+```
+
+---
+
+## FILE: app-runtime/artifacts/odbc.ini
+
+```ini
+[ODBC Data Sources]
+Snowflake = SnowflakeDSII
+
+[Snowflake]
+Driver = /usr/lib/snowflake/odbc/lib/libSnowflake.so
+Description = Snowflake ODBC Driver
+server = ${SNOWFLAKE_ACCOUNT}.snowflakecomputing.com
+database = ${SNOWFLAKE_DATABASE}
+schema = ${SNOWFLAKE_SCHEMA}
+warehouse = ${SNOWFLAKE_WAREHOUSE}
+role = ${SNOWFLAKE_ROLE}
+
+[ODBC]
+Trace = no
+TraceFile = /tmp/odbc.log
+```
+
+---
+
+## FILE: app-runtime-rshiny/artifacts/odbc.ini
+
+```ini
+[ODBC Data Sources]
+Snowflake = SnowflakeDSII
+
+[Snowflake]
+Driver = /usr/lib/snowflake/odbc/lib/libSnowflake.so
+Description = Snowflake ODBC Driver
+server = ${SNOWFLAKE_ACCOUNT}.snowflakecomputing.com
+database = ${SNOWFLAKE_DATABASE}
+schema = ${SNOWFLAKE_SCHEMA}
+warehouse = ${SNOWFLAKE_WAREHOUSE}
+role = ${SNOWFLAKE_ROLE}
+
+[ODBC]
+Trace = no
+TraceFile = /tmp/odbc.log
+```
+
+---
+
+## FILE: app-runtime/artifacts/jdbc.ini
+
+```ini
+# JDBC Configuration for Snowflake
+[snowflake]
+driver=/usr/lib/snowflake/jdbc/snowflake-jdbc-3.13.34.jar
+url=jdbc:snowflake://${SNOWFLAKE_ACCOUNT}.snowflakecomputing.com
+warehouse=${SNOWFLAKE_WAREHOUSE}
+database=${SNOWFLAKE_DATABASE}
+schema=${SNOWFLAKE_SCHEMA}
+role=${SNOWFLAKE_ROLE}
+```
+
+---
+
+## FILE: docker-compose.yml
+
+```yaml
+version: '3.8'
+
+services:
+  shiny-server:
+    build: .
+    image: shiny-ubuntu:24.04-s3
+    container_name: shiny-server
+    ports:
+      - "3838:3838"
+    environment:
+      # S3 Configuration
+      - S3_BUCKET=${S3_BUCKET}
+      - S3_KEY=${S3_KEY}
+      - AWS_REGION=${AWS_REGION:-ap-southeast-2}
+      
+      # AWS Credentials (use IAM roles in production)
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      
+      # ECS Environment Variables (will be set automatically in ECS)
+      - AWS_CONTAINER_CREDENTIALS_RELATIVE_URI=${AWS_CONTAINER_CREDENTIALS_RELATIVE_URI}
+      - AWS_EXECUTION_ENV=${AWS_EXECUTION_ENV}
+      - ECS_AGENT_URI=${ECS_AGENT_URI}
+      - ECS_CONTAINER_METADATA_URI=${ECS_CONTAINER_METADATA_URI}
+      - ECS_CONTAINER_METADATA_URI_V4=${ECS_CONTAINER_METADATA_URI_V4}
+      
+      # Shiny Configuration
+      - APPLICATION_LOGS_TO_STDOUT=true
+      - SHINY_LOG_STDERR=1
+      
+      # Your custom environment variables
+      - SF_LIB_of_Asset_Tool_V10.03=assets
+      
+      # Snowflake Configuration (optional)
+      - SNOWFLAKE_USER=${SNOWFLAKE_USER}
+      - SNOWFLAKE_PASSWORD=${SNOWFLAKE_PASSWORD}
+      - SNOWFLAKE_ACCOUNT=${SNOWFLAKE_ACCOUNT}
+      - SNOWFLAKE_WAREHOUSE=${SNOWFLAKE_WAREHOUSE}
+      - SNOWFLAKE_DATABASE=${SNOWFLAKE_DATABASE}
+      - SNOWFLAKE_SCHEMA=${SNOWFLAKE_SCHEMA}
+    
+    volumes:
+      # Optional: Mount local directory for development
+      # - ./local-apps:/srv/shiny-server/local-apps
+      
+      # Optional: Persist logs
+      - shiny-logs:/var/log/shiny-server
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3838/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  shiny-logs:
+```
+
+---
+
+## FILE: .env.example
+
+```bash
+# S3 Configuration
+S3_BUCKET=your-s3-bucket-name
+S3_KEY=path/to/your/app
+AWS_REGION=ap-southeast-2
+
+# AWS Credentials (use IAM roles in production)
+AWS_ACCESS_KEY_ID=your-access-key
+AWS_SECRET_ACCESS_KEY=your-secret-key
+
+# Snowflake Configuration (optional)
+SNOWFLAKE_USER=your_snowflake_user
+SNOWFLAKE_PASSWORD=your_snowflake_password
+SNOWFLAKE_ACCOUNT=your_account.region
+SNOWFLAKE_WAREHOUSE=your_warehouse
+SNOWFLAKE_DATABASE=your_database
+SNOWFLAKE_SCHEMA=your_schema
+
+# Application Configuration
+SF_LIB_of_Asset_Tool_V10.03=assets
+
+# Logging
+APPLICATION_LOGS_TO_STDOUT=true
+SHINY_LOG_STDERR=1
+```
+
+---
+
+## FILE: Makefile
+
+```makefile
+# Makefile for Shiny Server Docker Image
+
+# Variables
+IMAGE_NAME := shiny-ubuntu
+IMAGE_TAG := 24.04-s3
+ECR_REPO := 456998814824.dkr.ecr.ap-southeast-2.amazonaws.com
+AWS_REGION := ap-southeast-2
+
+.PHONY: help build push run stop logs shell clean test
+
+help: ## Show this help message
+	@echo 'Usage: make [target]'
+	@echo ''
+	@echo 'Targets:'
+	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-15s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+
+build: ## Build the Docker image
+	docker build -t $(IMAGE_NAME):$(IMAGE_TAG) .
+
+push: build ## Push image to ECR
+	aws ecr get-login-password --region $(AWS_REGION) | docker login --username AWS --password-stdin $(ECR_REPO)
+	docker tag $(IMAGE_NAME):$(IMAGE_TAG) $(ECR_REPO)/$(IMAGE_NAME):$(IMAGE_TAG)
+	docker push $(ECR_REPO)/$(IMAGE_NAME):$(IMAGE_TAG)
+
+run: ## Run the container locally
+	docker-compose up -d
+
+stop: ## Stop the container
+	docker-compose down
+
+logs: ## View container logs
+	docker-compose logs -f
+
+shell: ## Open a shell in the running container
+	docker exec -it shiny-server /bin/bash
+
+clean: ## Clean up containers and images
+	docker-compose down -v
+	docker rmi $(IMAGE_NAME):$(IMAGE_TAG) || true
+
+test: ## Test the container build and basic functionality
+	@echo "Building image..."
+	@make build
+	@echo "Running container..."
+	@docker run -d --name shiny-test -p 3838:3838 $(IMAGE_NAME):$(IMAGE_TAG)
+	@echo "Waiting for container to start..."
+	@sleep 10
+	@echo "Testing health endpoint..."
+	@curl -f http://localhost:3838/ || (docker logs shiny-test && exit 1)
+	@echo "Cleaning up..."
+	@docker stop shiny-test && docker rm shiny-test
+	@echo "Test passed!"
+```
+
+---
+
+## FILE: setup-build.sh
+
+```bash
+#!/bin/bash
+
+# setup-build.sh - Create directory structure and set permissions
+
+echo "Setting up build directory structure..."
+
+# Create directories
+mkdir -p rocker_scripts
+mkdir -p cont-init.d
+mkdir -p services.d/shiny-server
+mkdir -p app-runtime/artifacts
+mkdir -p app-runtime-rshiny/artifacts
+
+echo "✓ Directories created"
+
+# Set permissions for scripts
+echo "Setting permissions..."
+chmod +x rocker_scripts/*.sh 2>/dev/null || echo "  (rocker scripts will be set after creation)"
+chmod +x cont-init.d/* 2>/dev/null || echo "  (init scripts will be set after creation)"
+chmod +x services.d/shiny-server/* 2>/dev/null || echo "  (service scripts will be set after creation)"
+chmod +x shiny-server-entrypoint.sh 2>/dev/null || echo "  (entrypoint will be set after creation)"
+chmod +x setup-build.sh 2>/dev/null || true
+chmod +x test-docker-build.sh 2>/dev/null || true
+
+echo ""
+echo "✅ Setup complete!"
+echo ""
+echo "Next steps:"
+echo "1. Create all the script files in their respective directories"
+echo "2. Add your actual cloudguard-root.crt certificate"
+echo "3. Run 'chmod +x rocker_scripts/*.sh cont-init.d/* services.d/shiny-server/*'"
+echo "4. Run: docker build -t shiny-ubuntu:24.04-s3 ."
+```
+
+---
+
+## FILE: test-docker-build.sh
+
+```bash
+#!/bin/bash
+
+# test-docker-build.sh - Test the Docker build
+
+set -e
+
+echo "======================================"
+echo "Docker Build Test for Shiny S3 Ubuntu"
+echo "======================================"
+echo
+
+# Check if all required files exist
+echo "Checking required files..."
+required_files=(
+    "Dockerfile"
+    "shiny-server-entrypoint.sh"
+    "shiny-server.conf"
+    "pip.conf"
+    "cloudguard-root.crt"
+)
+
+missing_files=()
+for file in "${required_files[@]}"; do
+    if [ ! -f "$file" ]; then
+        missing_files+=("$file")
+    fi
+done
+
+if [ ${#missing_files[@]} -ne 0 ]; then
+    echo "❌ ERROR: Missing required files:"
+    printf '%s\n' "${missing_files[@]}"
+    exit 1
+fi
+echo "✓ All required files present"
+
+# Check if script directories exist
+echo "Checking script directories..."
+required_dirs=(
+    "rocker_scripts"
+    "cont-init.d"
+    "services.d/shiny-server"
+)
+
+missing_dirs=()
+for dir in "${required_dirs[@]}"; do
+    if [ ! -d "$dir" ]; then
+        missing_dirs+=("$dir")
+    fi
+done
+
+if [ ${#missing_dirs[@]} -ne 0 ]; then
+    echo "❌ ERROR: Missing required directories:"
+    printf '%s\n' "${missing_dirs[@]}"
+    exit 1
+fi
+echo "✓ All required directories present"
+
+# Build the Docker image
+echo
+echo "Building Docker image..."
+echo "========================"
+
+if docker build -t shiny-ubuntu:24.04-s3-test .; then
+    echo
+    echo "✅ Docker build completed successfully!"
+    echo
+    echo "Running basic tests..."
+    echo "======================"
+    
+    # Test R
+    echo -n "Testing R installation... "
+    if docker run --rm shiny-ubuntu:24.04-s3-test R --version > /dev/null 2>&1; then
+        echo "✓"
+    else
+        echo "❌"
+    fi
+    
+    # Test Python
+    echo -n "Testing Python installation... "
+    if docker run --rm shiny-ubuntu:24.04-s3-test python --version > /dev/null 2>&1; then
+        echo "✓"
+    else
+        echo "❌"
+    fi
+    
+    # Test AWS CLI
+    echo -n "Testing AWS CLI... "
+    if docker run --rm shiny-ubuntu:24.04-s3-test aws --version > /dev/null 2>&1; then
+        echo "✓"
+    else
+        echo "❌"
+    fi
+    
+    echo
+    echo "🎉 All tests passed! Your image is ready."
+    echo
+    echo "To run with S3:"
+    echo "docker run -d -p 3838:3838 \\"
+    echo "  -e S3_BUCKET=your-bucket \\"
+    echo "  -e S3_KEY=your-app \\"
+    echo "  -e AWS_ACCESS_KEY_ID=\$AWS_ACCESS_KEY_ID \\"
+    echo "  -e AWS_SECRET_ACCESS_KEY=\$AWS_SECRET_ACCESS_KEY \\"
+    echo "  shiny-ubuntu:24.04-s3-test"
+else
+    echo
+    echo "❌ Docker build failed!"
+    exit 1
+fi
+```
+
+---
+
+## FILE: README.md
+
+```markdown
+# Shiny Server S3 Docker Image (Ubuntu 24.04)
+
+This Docker image follows the rocker/shiny pattern (R built from source) and includes S3 integration for downloading Shiny apps at runtime.
+
+## Features
+
+- Ubuntu 24.04 base (following rocker/shiny:4.5 pattern)
+- R 4.4.2 built from source
+- Python 3.11 with virtual environment
+- Snowflake ODBC/JDBC drivers
+- AWS CLI v2 for S3 integration
+- S6 init system for process management
+- Downloads Shiny apps from S3 at runtime
+
+## Quick Start
+
+1. **Setup the build directory**:
+   ```bash
+   ./setup-build.sh
+   ```
+
+2. **Make scripts executable**:
+   ```bash
+   chmod +x rocker_scripts/*.sh
+   chmod +x cont-init.d/*
+   chmod +x services.d/shiny-server/*
+   chmod +x shiny-server-entrypoint.sh
+   chmod +x setup-build.sh
+   chmod +x test-docker-build.sh
+   ```
+
+3. **Build the image**:
+   ```bash
+   docker build -t shiny-ubuntu:24.04-s3 .
+   ```
+
+4. **Test the build**:
+   ```bash
+   ./test-docker-build.sh
+   ```
+
+## Running the Container
+
+### With S3 Integration
+
+```bash
+docker run -d \
+  --name shiny-server \
+  -p 3838:3838 \
+  -e S3_BUCKET=your-bucket \
+  -e S3_KEY=path/to/your/app \
+  -e AWS_REGION=ap-southeast-2 \
+  -e AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID \
+  -e AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY \
+  shiny-ubuntu:24.04-s3
+```
+
+### Using Docker Compose
+
+1. Copy `.env.example` to `.env`
+2. Fill in your values
+3. Run: `docker-compose up -d`
+
+## ECS Deployment
+
+See the ECS task definition template in the documentation. Key points:
+- Use IAM roles instead of access keys
+- Set S3_BUCKET and S3_KEY environment variables
+- Ensure task role has S3 read permissions
+
+## Troubleshooting
+
+- Check logs: `docker logs shiny-server`
+- Test S3 access: `docker exec -it shiny-server aws s3 ls s3://your-bucket/`
+- Check permissions: `docker exec -it shiny-server ls -la /srv/shiny-server/app/`
+```
+
+---
+
+## Setup Instructions
+
+### Step 1: Create the directory structure
+```bash
+mkdir shiny-s3-docker && cd shiny-s3-docker
+./setup-build.sh
+```
+
+### Step 2: Create all files
+Copy each file content above to its respective location.
+
+### Step 3: Make scripts executable
+```bash
+chmod +x *.sh
+chmod +x rocker_scripts/*.sh
+chmod +x cont-init.d/*
+chmod +x services.d/shiny-server/*
+```
+
+### Step 4: Add your certificate
+Replace the placeholder content in `cloudguard-root.crt` with your actual certificate.
+
+### Step 5: Build
+```bash
+docker build -t shiny-ubuntu:24.04-s3 .
+```
+
+### Step 6: Test
+```bash
+./test-docker-build.sh
+```
+
+## Notes
+
+- All scripts are now separate files (no inline creation)
+- Follows the exact rocker/shiny pattern
+- Includes your S3 download functionality
+- All ODBC/JDBC files are properly copied
+- Complete with testing and helper scripts
+```
