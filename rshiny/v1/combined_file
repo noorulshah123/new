@@ -591,6 +591,10 @@ cd Python-${PYTHON_VERSION}
 make -j$(nproc)
 make altinstall
 
+# Update shared library cache
+echo "/usr/local/lib" >> /etc/ld.so.conf.d/python.conf
+ldconfig
+
 ln -sf /usr/local/bin/python3.11 /usr/bin/python
 ln -sf /usr/local/bin/python3.11 /usr/bin/python3
 ln -sf /usr/local/bin/pip3.11 /usr/bin/pip
