@@ -1,0 +1,144 @@
+# Shiny Server S3 Docker Image (Ubuntu 24.04)
+
+This Docker image follows the rocker/shiny pattern (R built from source) and includes S3 integration for downloading Shiny apps at runtime.
+
+## Features
+
+- Ubuntu 24.04 base (following rocker/shiny:4.5 pattern)
+- R 4.4.2 built from source
+- Python 3.11 with virtual environment
+- Snowflake ODBC/JDBC drivers
+- AWS CLI v2 for S3 integration
+- S6 init system for process management
+- Downloads Shiny apps from S3 at runtime
+
+## Prerequisites
+
+1. Docker installed
+2. AWS credentials (for S3 access)
+3. Your Shiny app uploaded to S3
+
+## Directory Structure
+
+```
+shiny-s3-docker/
+├── Dockerfile
+├── shiny-server-entrypoint.sh
+├── shiny-server.conf
+├── pip.conf
+├── cloudguard-root.crt
+├── rocker_scripts/
+│   ├── install_R_source.sh
+│   ├── setup_R.sh
+│   ├── install_python.sh
+│   ├── install_s6init.sh
+│   └── install_shiny_server.sh
+├── cont-init.d/
+│   └── 01_set_env
+├── services.d/
+│   └── shiny-server/
+│       ├── run
+│       └── finish
+├── app-runtime/
+│   └── artifacts/
+│       ├── odbc.ini
+│       └── jdbc.ini
+└── app-runtime-rshiny/
+    └── artifacts/
+        └── odbc.ini
+```
+
+## Quick Start
+
+1. **Setup the build directory**:
+   ```bash
+   ./setup-build.sh
+   ```
+
+2. **Copy all script files** to their respective directories
+
+3. **Make scripts executable**:
+   ```bash
+   chmod +x rocker_scripts/*.sh
+   chmod +x cont-init.d/*
+   chmod +x services.d/shiny-server/*
+   chmod +x shiny-server-entrypoint.sh
+   ```
+
+4. **Build the image**:
+   ```bash
+   docker build -t shiny-ubuntu:24.04-s3 .
+   ```
+
+5. **Test the build**:
+   ```bash
+   ./test-docker-build.sh
+   ```
+
+## Running the Container
+
+### With S3 Integration
+
+```bash
+docker run -d \
+  --name shiny-server \
+  -p 3838:3838 \
+  -e S3_BUCKET=your-bucket \
+  -e S3_KEY=path/to/your/app \
+  -e AWS_REGION=ap-southeast-2 \
+  -e AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID \
+  -e AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY \
+  shiny-ubuntu:24.04-s3
+```
+
+### Environment Variables
+
+- `S3_BUCKET` (required): Your S3 bucket name
+- `S3_KEY` (required): Path to your app in S3
+- `AWS_REGION`: AWS region (default: ap-southeast-2)
+- `AWS_ACCESS_KEY_ID`: AWS access key (use IAM roles in ECS)
+- `AWS_SECRET_ACCESS_KEY`: AWS secret key (use IAM roles in ECS)
+
+## ECS Deployment
+
+Use the provided ECS task definition template with:
+- Task role with S3 read permissions
+- Environment variables for S3_BUCKET and S3_KEY
+- Health check on port 3838
+
+## Troubleshooting
+
+### Build Errors
+
+- **"unknown instruction: set"**: Make sure all scripts are separate files, not inline
+- **"shiny user doesn't exist"**: ODBC files are copied after shiny user creation
+- **Missing files**: Run `setup-build.sh` to create directory structure
+
+### Runtime Errors
+
+- **S3 access denied**: Check IAM permissions
+- **App won't start**: Check logs with `docker logs shiny-server`
+- **Permission errors**: S6 init handles permissions automatically
+
+## Additional Configuration
+
+### Snowflake
+
+Configure Snowflake credentials via environment variables:
+- `SNOWFLAKE_ACCOUNT`
+- `SNOWFLAKE_USER`
+- `SNOWFLAKE_PASSWORD`
+- `SNOWFLAKE_WAREHOUSE`
+- `SNOWFLAKE_DATABASE`
+- `SNOWFLAKE_SCHEMA`
+
+### Custom ODBC/JDBC
+
+Modify the files in `app-runtime/artifacts/` before building.
+
+## Support
+
+For issues, check:
+1. Container logs: `docker logs shiny-server`
+2. S3 permissions and bucket/key names
+3. Network connectivity (VPC, security groups)
