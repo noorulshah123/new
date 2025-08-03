@@ -1,0 +1,3 @@
+# Create symlinks for s6-overlay compatibility
+RUN if [ ! -e /bin/bash ]; then ln -s /usr/bin/bash /bin/bash; fi && \
+    if [ ! -e /usr/bin/env ]; then ln -s /bin/env /usr/bin/env; fi
