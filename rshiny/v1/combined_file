@@ -1241,3 +1241,75 @@ mkdir -p /etc/cont-init.d
 mkdir -p /var/run/s6
 
 rm -rf /var/lib/apt/lists/*
+
+
+############
+
+#!/bin/bash
+set -e
+
+SHINY_SERVER_VERSION=${1:-${SHINY_SERVER_VERSION:-"1.5.22.1017"}}
+
+# Update package list
+apt-get update
+
+# Install dependencies that Shiny Server needs
+# These are the typical dependencies for Shiny Server on Ubuntu
+apt-get install -y --no-install-recommends \
+    sudo \
+    gdebi-core \
+    pandoc \
+    pandoc-citeproc \
+    libcurl4-gnutls-dev \
+    libcairo2-dev \
+    libxt-dev \
+    xtail \
+    wget
+
+# Download Shiny Server
+wget --no-verbose "https://download3.rstudio.org/ubuntu-18.04/x86_64/shiny-server-${SHINY_SERVER_VERSION}-amd64.deb" -O ss-latest.deb
+
+# Use dpkg to install and apt-get to fix any missing dependencies
+# This avoids the python3-apt issue with gdebi
+echo "Installing Shiny Server with dpkg..."
+dpkg -i ss-latest.deb || true
+
+# Fix any missing dependencies
+echo "Fixing any missing dependencies..."
+apt-get install -y -f
+
+# Verify installation was successful
+if [ ! -f "/usr/bin/shiny-server" ]; then
+    echo "ERROR: Shiny Server installation failed!"
+    exit 1
+fi
+
+echo "Shiny Server installed successfully!"
+
+# Clean up
+rm -f ss-latest.deb
+
+# Create shiny user if not exists
+if ! id -u shiny >/dev/null 2>&1; then
+    useradd -r -m -d /home/shiny shiny
+fi
+
+# Create necessary directories
+mkdir -p /var/log/shiny-server
+mkdir -p /srv/shiny-server
+mkdir -p /var/lib/shiny-server
+mkdir -p /etc/shiny-server
+
+# Set up permissions
+chown -R shiny:shiny /var/log/shiny-server
+chown -R shiny:shiny /srv/shiny-server
+chown -R shiny:shiny /var/lib/shiny-server
+
+# Install Shiny R package if not already installed
+R -e "if (!requireNamespace('shiny', quietly = TRUE)) install.packages('shiny')"
+
+# Setup for s6
+mkdir -p /etc/services.d/shiny-server
+
+# Clean up
+rm -rf /var/lib/apt/lists/*
