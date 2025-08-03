@@ -1234,6 +1234,7 @@ chmod +x /tmp/s6-overlay-installer
 /tmp/s6-overlay-installer /
 rm /tmp/s6-overlay-installer
 
+
 # Create init scripts directory
 mkdir -p /etc/services.d/shiny-server
 mkdir -p /etc/cont-init.d
