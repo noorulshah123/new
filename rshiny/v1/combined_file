@@ -1208,3 +1208,35 @@ docker build -t shiny-ubuntu:24.04-s3 .
 - All ODBC/JDBC files are properly copied
 - Complete with testing and helper scripts
 ```
+
+
+#!/bin/bash
+set -e
+
+apt-get update && apt-get install -y --no-install-recommends curl ca-certificates
+
+# Install s6-overlay
+ARCH=$(uname -m)
+if [ "$ARCH" = "x86_64" ]; then
+    S6_ARCH="amd64"
+elif [ "$ARCH" = "aarch64" ]; then
+    S6_ARCH="aarch64"
+fi
+
+# Download and extract s6-overlay
+curl -L https://github.com/just-containers/s6-overlay/releases/download/${S6_VERSION}/s6-overlay-${S6_ARCH}.tar.gz -o /tmp/s6-overlay.tar.gz
+tar xzf /tmp/s6-overlay.tar.gz -C /
+rm /tmp/s6-overlay.tar.gz
+
+# Download and run the installer
+curl -L https://github.com/just-containers/s6-overlay/releases/download/${S6_VERSION}/s6-overlay-${S6_ARCH}-installer -o /tmp/s6-overlay-installer
+chmod +x /tmp/s6-overlay-installer
+/tmp/s6-overlay-installer /
+rm /tmp/s6-overlay-installer
+
+# Create init scripts directory
+mkdir -p /etc/services.d/shiny-server
+mkdir -p /etc/cont-init.d
+mkdir -p /var/run/s6
+
+rm -rf /var/lib/apt/lists/*
