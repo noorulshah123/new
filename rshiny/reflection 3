@@ -1,0 +1,81 @@
+1. Follow Standard Practices
+What went WELL:
+
+Successfully integrated Service Now ticketing system with our development workflow, ensuring proper incident tracking and SLA adherence
+Established Jira board practices for internal development tracking, improving visibility into sprint progress and deliverables
+Implemented standardized change request procedures following Service Now protocols for all infrastructure modifications
+Maintained consistent GitLab CI/CD practices across multiple environments and teams
+Adhered to AWS best practices for SageMaker domain management and associated services (S3, Secrets Manager, Parameter Store)
+
+What could be BETTER:
+
+Could improve incident SLA response times by implementing automated alerts and escalation procedures
+Change request documentation could be more standardized with templates and checklists
+Need better integration between Service Now and Jira for seamless workflow transitions
+
+What will do NEXT:
+
+Develop automated SLA monitoring dashboards for better incident management
+Create standardized templates for change requests and deployment procedures
+Implement automated compliance checks in CI/CD pipelines to ensure standard practices are followed
+
+2. Implemented Automation
+What went WELL:
+
+Successfully implemented GitLab CI/CD pipelines that automate Terraform deployments across multiple environments
+Created automated API operations for temporary credential generation and Terraform Cloud registration
+Developed automated SSH key generation for secure module downloads by Terraform Cloud
+Built automated pipeline for ECS cluster creation supporting Shiny Proxy applications
+Implemented image build automation for Shiny Proxy and app-runtime environments
+Established single main.tf architecture with team-specific tfvars for scalable SageMaker domain management
+
+What could be BETTER:
+
+Could implement automated apply processes with proper approval workflows instead of manual apply steps
+Error handling and rollback mechanisms in pipelines could be enhanced
+Monitoring and alerting for pipeline failures needs improvement
+
+What will do NEXT:
+
+Implement automated approval workflows for Terraform apply operations
+Add comprehensive pipeline monitoring and alerting capabilities
+Expand automation to cover additional AWS services and deployment scenarios
+
+3. CKA Certification
+What went WELL:
+
+Successfully completed 75% of the learning curriculum ahead of schedule
+Enrolled for certification exam early, showing proactive planning
+Gained access to comprehensive learning materials and hands-on labs
+
+What could be BETTER:
+
+Better time management between work commitments and certification preparation
+Could have planned for potential work conflicts when setting initial exam date
+Need more consistent daily study schedule
+
+What will do NEXT:
+
+Complete remaining 25% of curriculum by end of September
+Schedule and complete CKA certification exam by October end
+Apply Kubernetes knowledge to current infrastructure projects
+
+4. Industry Skill Assessment
+What went WELL:
+
+Successfully completed primary skill assessment achieving P2 proficiency initially
+Achieved P3 proficiency in AWS skill assessment, demonstrating strong cloud expertise
+Received client appreciation for recent AWS workload management activities
+Demonstrated commitment to continuous learning and skill development
+
+What could be BETTER:
+
+Technical issues during assessment completion need to be anticipated and mitigated
+Could have prepared better backup plans for assessment completion
+Need more consistent skill development practice
+
+What will do NEXT:
+
+Retake and complete the assessment targeting higher proficiency level by month end
+Leverage recent client appreciation and AWS workload management experience
+Continue building on P3 AWS proficiency with advanced certifications and practical applications
