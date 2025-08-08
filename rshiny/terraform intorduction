@@ -1,0 +1,289 @@
+4-Day Terraform Migration Demo Structure for Snowflake Team
+Day 1: Foundation & Introduction (1 hour)
+"Why Terraform? Setting the Stage for Infrastructure as Code"
+Opening (10 minutes)
+
+Demo Context: Brief overview of current SageMaker platform setup
+Audience Alignment: Understanding Snowflake team's current infrastructure challenges
+Objectives: What the Snowflake team will achieve by the end of 4 days
+
+Terraform Fundamentals (25 minutes)
+
+Infrastructure as Code Benefits
+
+Version control for infrastructure
+Reproducible environments
+Team collaboration and code reviews
+Disaster recovery and compliance
+
+
+Terraform Core Concepts
+
+Providers, Resources, Data Sources
+State management importance
+Plan, Apply, Destroy workflow
+
+
+Why Terraform vs. Other IaC Tools
+
+Multi-cloud support
+Declarative syntax
+Large community and provider ecosystem
+
+
+
+Architecture Overview (20 minutes)
+
+Current Setup Walkthrough (using your platform as example)
+
+Platform Layer: VPC, Load Balancers, Security Groups
+Application Layer: Domain/Teams Management
+Module Structure and Reusability
+
+
+Key Architecture Principles
+
+Separation of concerns
+Module-based approach
+Environment promotion strategy
+
+
+
+Day 1 Wrap-up (5 minutes)
+
+Tomorrow's Preview: Hands-on Terraform basics
+Questions & Initial Concerns
+
+
+Day 2: Terraform Fundamentals & Modularization (1 hour)
+"Building Blocks: Resources, Modules, and Best Practices"
+Terraform Syntax & Structure (20 minutes)
+
+Basic Terraform Configuration
+
+Provider configuration
+Resource blocks
+Variables and outputs
+
+
+Live Demo: Simple AWS resource creation
+
+S3 bucket creation (parallel to your domain setup)
+Security group configuration
+
+
+
+Module Architecture Deep Dive (25 minutes)
+
+Module Design Principles (using your setup as reference)
+
+Input variables and validation
+Output values for module chaining
+Module composition patterns
+
+
+Real Example Walkthrough
+
+Your domain creation module structure
+How teams module references domain module
+Parameter passing between modules
+
+
+Module Source Options
+
+GitLab repositories (your current approach)
+Terraform Registry
+Local modules for development
+
+
+
+Variables and Configuration Management (10 minutes)
+
+tfvars Files Strategy
+
+Environment-specific configurations
+Team-specific parameters (your 40 teams example)
+Sensitive data handling
+
+
+Variable Precedence and Best Practices
+
+Q&A and Planning (5 minutes)
+
+Discussion: How this applies to Snowflake infrastructure
+Tomorrow: GitLab CI/CD and automation
+
+
+Day 3: GitLab CI/CD Integration & Terraform Cloud (1 hour)
+"Automation Pipeline: From Code to Infrastructure"
+GitLab CI/CD for Terraform (25 minutes)
+
+Pipeline Architecture Overview
+
+Your current GitLab setup explanation
+Plan vs Apply stages
+Environment branching strategy
+
+
+Live Demo: GitLab CI/CD Pipeline
+
+.gitlab-ci.yml structure for Terraform
+API token management for Terraform Cloud
+SSH key generation for module access
+AWS credential management via role assumption
+
+
+
+Terraform Cloud Workspaces (20 minutes)
+
+Workspace Strategy
+
+Environment separation (dev, staging, prod)
+Team-based workspace organization
+Variable management in workspaces
+
+
+API Integration Demonstration
+
+How your curl commands push configurations
+Workspace state management
+Remote state benefits
+
+
+
+Security & Access Management (10 minutes)
+
+AWS Role Assumption Pattern (your trust policy approach)
+
+GitLab OIDC integration
+Temporary credential management
+Least privilege principles
+
+
+Secrets Management
+
+GitLab variables vs Terraform Cloud variables
+Parameter Store integration (from your setup)
+
+
+
+Day 3 Wrap-up (5 minutes)
+
+Security best practices recap
+Tomorrow: Migration strategy and hands-on
+
+
+Day 4: Migration Strategy & Hands-On Workshop (1 hour)
+"Your Path Forward: Practical Migration Approach"
+Migration Planning Framework (15 minutes)
+
+Assessment Phase
+
+Current infrastructure inventory
+Dependencies mapping
+Risk assessment
+
+
+Migration Strategies
+
+Greenfield vs. Brownfield approach
+Gradual vs. Big Bang migration
+Import existing resources to Terraform state
+
+
+
+Hands-On Migration Exercise (30 minutes)
+
+Scenario-Based Workshop
+
+Start with simple Snowflake infrastructure component
+Create basic module structure
+Set up GitLab repository
+Configure basic CI/CD pipeline
+
+
+Best Practices Application
+
+Naming conventions
+Directory structure
+Documentation standards
+
+
+
+Implementation Roadmap (10 minutes)
+
+Phase 1: Foundation Setup (Weeks 1-2)
+
+Terraform Cloud organization
+GitLab repository structure
+Basic CI/CD pipeline
+
+
+Phase 2: Core Infrastructure (Weeks 3-6)
+
+Network components
+Security configurations
+Base modules development
+
+
+Phase 3: Application Infrastructure (Weeks 7-12)
+
+Application-specific resources
+Environment promotion
+Team onboarding
+
+
+
+Final Q&A and Next Steps (5 minutes)
+
+Resource sharing: Documentation, examples, contacts
+Support structure: How to get help during migration
+Follow-up sessions: Ongoing support plan
+
+
+Key Demo Techniques Throughout All Days
+Live Coding Demonstrations
+
+Day 1: Basic resource creation
+Day 2: Module development
+Day 3: Pipeline execution
+Day 4: End-to-end workflow
+
+Reference Architecture Usage
+
+Use your SageMaker platform as a concrete example without diving deep into SageMaker specifics
+Focus on the architectural patterns that apply to any AWS infrastructure
+Highlight reusable concepts like multi-team management, module composition, and CI/CD integration
+
+Interactive Elements
+
+Day 1: Infrastructure challenges discussion
+Day 2: Module design exercise
+Day 3: Pipeline review and feedback
+Day 4: Migration planning workshop
+
+Supporting Materials to Prepare
+
+Sample Terraform configurations (simplified versions of your modules)
+GitLab CI/CD templates (generalized from your pipeline)
+Architecture diagrams (showing module relationships)
+Migration checklist (actionable steps for Snowflake team)
+Best practices documentation (coding standards, naming conventions)
+
+
+Success Metrics for the Demo
+By End of Day 4, Snowflake Team Should:
+
+Understand Terraform value proposition for their use case
+Have a clear migration roadmap with timelines
+Know how to structure modules and manage configurations
+Understand GitLab CI/CD integration for Terraform
+Feel confident about starting their migration journey
+Have access to templates and examples to begin implementation
+
+Follow-Up Support Structure
+
+Weekly check-ins for first month
+Code review support for initial modules
+Troubleshooting assistance for CI/CD setup
+Best practices refinement based on their specific needs
