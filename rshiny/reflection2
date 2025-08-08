@@ -1,0 +1,90 @@
+1. Delivery - Follow Standard Practices
+What went WELL:
+
+Successfully maintained Service Now incident resolution within SLA targets, ensuring timely response and resolution for platform issues
+Implemented standardized Change Request procedures for all AWS SageMaker domain deployments, reducing failed changes
+Established consistent Jira workflows for development tracking, improving visibility across Platform and Development teams
+Adhered to AWS Well-Architected Framework principles for SageMaker services architecture
+Maintained proper documentation and knowledge articles in Service Now for common issues
+
+What could do BETTER:
+
+Enhance automation of routine Service Now tickets to reduce manual intervention
+Implement proactive monitoring to prevent incidents before they occur
+Strengthen change advisory board (CAB) documentation with more detailed impact analysis
+
+What will do NEXT:
+
+Develop runbooks for top 5 recurring incident types
+Implement automated ticket routing based on service components
+Create service catalog items for common SageMaker domain requests
+
+2. Implemented Automation
+What went WELL:
+
+Successfully designed and deployed GitLab CI/CD pipelines across dev/staging/prod environments, reducing deployment time by 70%
+Automated Terraform Cloud integration with dynamic workspace provisioning for multiple teams, managing 15+ SageMaker domains
+Implemented secure credential management using temporary AWS STS tokens and SSH key rotation
+Built comprehensive Docker image pipelines for Shiny proxy, app-runtime, and custom SageMaker kernel images (JupyterLab, Code Editor, R-kernel)
+Created modular Terraform architecture with single main.tf and team-specific tfvars, improving code maintainability
+Automated ECS cluster provisioning for Shiny applications with auto-scaling capabilities
+
+What could do BETTER:
+
+Implement automated rollback mechanisms for failed deployments
+Add more comprehensive testing stages in CI/CD pipeline
+Enhance monitoring and alerting for pipeline failures
+
+What will do NEXT:
+
+Implement GitOps approach for infrastructure changes
+Add automated security scanning in image build pipelines
+Create self-service portal for team workspace provisioning
+
+3. CKA Certification
+What went WELL:
+
+Completed 75% of Kubernetes Administrator curriculum, gaining hands-on experience with cluster management
+Proactively purchased certification exam showing commitment to professional development
+Applied Kubernetes concepts to understand container orchestration patterns used in ECS/SageMaker
+
+What could do BETTER:
+
+Better time management to balance certification preparation with project deliverables
+Could have leveraged team knowledge-sharing sessions for collaborative learning
+
+What will do NEXT:
+
+Complete remaining 25% of curriculum by September
+Schedule dedicated study time weekly
+Take certification exam by October 31st as planned
+Share learnings with team through knowledge transfer sessions
+
+4. Self Development - Industry Skill Assessment
+What went WELL:
+
+Achieved P2 proficiency in primary skill assessment demonstrating solid technical foundation
+Earned P3 proficiency in AWS skill assessment, validating deep expertise in cloud services
+Received client appreciation for exceptional delivery and technical problem-solving
+Successfully managed complex AWS workloads including SageMaker, Secrets Manager, Parameter Store, Lambda, and S3 integrations
+Gained expertise in Infrastructure as Code using Terraform Cloud
+
+What could do BETTER:
+
+Complete the full assessment without technical interruptions
+Prepare more thoroughly for edge case scenarios in assessments
+
+What will do NEXT:
+
+Retake primary skill assessment targeting P3/P4 proficiency by month-end
+Document best practices from AWS workload management experience
+Pursue AWS specialty certifications to complement existing expertise
+Mentor junior team members on AWS services and IaC practices
+
+Additional Points to Highlight:
+
+Cross-functional collaboration: Working across Platform and Development teams
+Security focus: Implementation of secure credential management, secrets rotation
+Innovation: Custom kernel images for specialized data science workflows
+Scale: Managing infrastructure for multiple teams through centralized platform
+Cost optimization: Efficient resource utilization through workspace segregation
