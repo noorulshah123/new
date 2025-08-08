@@ -1,0 +1,94 @@
+1. Goal: Follow Standard Practices
+Reflection:
+
+What went well:
+Adhered to standard ITSM practices using ServiceNow for incident, problem, and change management. Ensured SLA compliance for incident resolution and change implementation. Followed structured CR procedures for SageMaker-related deployments.
+
+Tools & Processes:
+Leveraged Jira for agile sprint planning and internal tracking. Used Terraform Cloud for IaC standardization and version-controlled deployments. Maintained code quality and traceability via GitLab CI/CD.
+
+What can be improved:
+Improve CR turnaround time and ensure regular retrospective documentation of incidents to reduce recurrence.
+
+Next steps:
+Implement dashboards to track SLA compliance trends. Introduce automated changelog generation for deployments.
+
+2. Goal: Implemented Automation
+Reflection:
+
+What went well:
+Designed and implemented GitLab CI/CD pipelines for multiple AWS environments. Automated:
+
+SageMaker domain & team provisioning.
+
+Temporary credential generation via AWS API.
+
+SSH key management for Terraform Cloud.
+
+Terraform workspace configuration (one per team) using reusable main.tf and team-specific .tfvars.
+
+Additional Impact:
+Automated ECS cluster creation and image build pipelines for ShinyProxy applications. Streamlined runtime image packaging using Python scripts.
+
+What can be improved:
+Add rollback strategies for failed CI/CD pipeline stages. Improve parallel deployment capabilities.
+
+Next steps:
+Introduce approval gates and Slack/email notifications for pipeline events. Move towards GitOps-style state reconciliation using Terraform drift detection.
+
+3. Goal: Certified Kubernetes Administrator (CKA)
+Reflection:
+
+What went well:
+Completed 75% of CKA training ahead of schedule. Booked exam and practiced using real-world cluster scenarios in internal UAT environments.
+
+What can be improved:
+Due to project deliverables, had to push exam date to October. Need better work-study balance during delivery peak phases.
+
+Next steps:
+Schedule weekly learning slots and leverage idle CI/CD resources for hands-on labs. Aim to complete certification by end of October.
+
+4. Goal: Primary Skill Assessment
+Reflection:
+
+What went well:
+Completed the primary skill proficiency assessment earlier with P2 level. Also received P3 proficiency in AWS Skill Assessment recently.
+
+Client recognition:
+Received appreciation from client for AWS workload optimization and automation efforts in SageMaker and CI/CD operations.
+
+What could be better:
+The earlier skill test was cut midway due to technical issues — plan to retake and target P3 proficiency.
+
+Next steps:
+Retake skill assessment by month-end and continue contributing to AWS-specific automation use cases.
+
+Self-Evaluation for ABCD
+A. Areas of Impact
+Delivered scalable and reusable automation solutions for AWS SageMaker platforms across multiple environments.
+
+Contributed to platform efficiency by reducing manual efforts through CI/CD and IaC practices.
+
+Ensured compliance with client-specific SLAs and DevSecOps standards.
+
+B. Behavior
+Proactively took ownership of automation and DevOps pipelines.
+
+Demonstrated accountability in incident management and change reviews through ServiceNow.
+
+Adapted to Agile practices using Jira and participated in sprint grooming and retrospectives.
+
+C. Collaboration
+Coordinated across multiple internal teams (DevOps, security, application) to onboard new SageMaker users and manage workspaces.
+
+Worked closely with client-side stakeholders to finalize infrastructure and automation pipelines.
+
+Facilitated handover sessions and documentation for ECS and SageMaker platform onboarding.
+
+D. Development
+Invested time in CKA preparation despite project load.
+
+Achieved P3 in AWS workload skill assessment.
+
+Targeting growth in Kubernetes and infrastructure automation practices with Terraform and GitLab pipelines.
+
