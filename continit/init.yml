@@ -1,0 +1,13 @@
+specs:
+  - id: shared-app
+    # Enable sharing
+    max-seats-per-container: 5      # 5 users per container
+    
+    # Pre-initialization
+    container-pre-initialization-seats: 3   # Start 3 containers
+    minimum-seats-available: 1              # Keep 1 ready
+    
+    # Total capacity: 3 containers × 5 users = 15 concurrent users
+
+# 1. User-specific data paths
+user_dir <- file.path("/tmp/users", session$request
