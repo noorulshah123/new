@@ -1,0 +1,13 @@
+specs:
+  - id: your-app
+    container-cpu-request: 1024
+    container-memory-request: 2048
+    container-env:
+      # These are set at container start (pre-init)
+      APP_DIR: /home/shinyuser
+      APP_TYPE: pyshiny
+    http-headers:
+      # These headers are injected when user is assigned
+      Authorization: "Bearer #{oidcUser.accessToken}"
+      X-SP-UserId: "#{proxy.userId}"
+      X-SP-UserGroups: "#{proxy.userGroups}"
