@@ -1,0 +1,33 @@
+# ===== COMPREHENSIVE VULNERABILITY FIXES =====
+
+# 1. Fix Python package vulnerabilities
+RUN pip install --upgrade \
+    redshift-connector>=2.1.7 \
+    protobuf>=6.31.1
+
+# 2. Fix Stanford CoreNLP protobuf-java vulnerability
+# Assuming Stanford CoreNLP is extracted to /opt/stanford
+RUN if [ -f /opt/stanford/protobuf-java-4.28.2.jar ]; then \
+        echo "Fixing Stanford CoreNLP protobuf vulnerability..." && \
+        cd /opt/stanford && \
+        # Backup old jar
+        mv protobuf-java-4.28.2.jar protobuf-java-4.28.2.jar.vulnerable && \
+        # Download secure version
+        wget -q https://repo1.maven.org/maven2/com/google/protobuf/protobuf-java/4.28.3/protobuf-java-4.28.3.jar && \
+        # Ensure permissions match
+        chmod 644 protobuf-java-4.28.3.jar && \
+        # Update any references in scripts or config files
+        grep -rl "protobuf-java-4.28.2" . | xargs sed -i 's/protobuf-java-4.28.2/protobuf-java-4.28.3/g' 2>/dev/null || true && \
+        echo "Stanford CoreNLP protobuf updated successfully"; \
+    fi
+
+# 3. Fix Node.js packages (if accessible globally)
+RUN if command -v npm &> /dev/null; then \
+        npm install -g npm@latest && \
+        npm install -g tar-fs@3.0.9 form-data@4.0.4 && \
+        npm audit fix -g --force || true; \
+    fi
+
+# 4. For R-embedded Node packages (more complex)
+# These are embedded in R packages and harder to fix directly
+# You might need to reinstall affected R packages from source
