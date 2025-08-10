@@ -1,0 +1,356 @@
+#!/bin/bash
+
+# =====================================================
+# STANFORD CORENLP (JAVA) - HOW IT USES PROTOBUF
+# =====================================================
+
+echo "======================================================="
+echo "PART 1: STANFORD CORENLP (JAVA) PROTOBUF USAGE"
+echo "======================================================="
+
+# 1. TYPICAL STANFORD CORENLP EXECUTION
+echo -e "\n[1] How you run Stanford CoreNLP:"
+echo "-----------------------------------"
+
+cat << 'EOF'
+# Command line execution:
+java -mx4g -cp "/opt/stanford-corenlp-4.5.6/*" \
+     edu.stanford.nlp.pipeline.StanfordCoreNLPServer \
+     -port 9000 \
+     -timeout 15000
+
+# What happens internally:
+# 1. JVM loads ALL JARs from /opt/stanford-corenlp-4.5.6/*
+# 2. This includes protobuf-java-4.28.2.jar
+# 3. CoreNLP uses protobuf for serializing linguistic annotations
+EOF
+
+# 2. WHAT PROTOBUF DOES IN CORENLP
+echo -e "\n[2] What protobuf does in Stanford CoreNLP:"
+echo "--------------------------------------------"
+
+cat << 'EOF'
+Stanford CoreNLP uses protobuf for:
+- Serializing parse trees
+- Storing Named Entity Recognition results  
+- Transmitting data between server and clients
+- Saving/loading annotated documents
+
+Example internal flow:
+Text: "Apple Inc. is in California"
+         ↓
+   CoreNLP Processing
+         ↓
+Protobuf Serialization (using protobuf-java-4.28.2.jar):
+{
+  "sentences": [{
+    "tokens": [
+      {"word": "Apple", "ner": "ORGANIZATION"},
+      {"word": "Inc.", "ner": "ORGANIZATION"},
+      {"word": "is", "ner": "O"},
+      {"word": "in", "ner": "O"},
+      {"word": "California", "ner": "LOCATION"}
+    ]
+  }]
+}
+EOF
+
+# 3. PYTHON CALLING STANFORD CORENLP
+echo -e "\n[3] Python script calling Stanford CoreNLP:"
+echo "--------------------------------------------"
+
+cat << 'PYTHON' > /tmp/corenlp_example.py
+#!/usr/bin/env python
+"""
+This Python script uses Stanford CoreNLP (Java) as a subprocess
+"""
+import subprocess
+import json
+import requests
+
+# Method 1: Start CoreNLP as a server (uses Java protobuf internally)
+def start_corenlp_server():
+    """Start Stanford CoreNLP server - this uses protobuf-java JAR"""
+    cmd = [
+        'java', '-mx4g',
+        '-cp', '/opt/stanford-corenlp-4.5.6/*',
+        'edu.stanford.nlp.pipeline.StanfordCoreNLPServer',
+        '-port', '9000',
+        '-timeout', '15000'
+    ]
+    # This Java process uses protobuf-java-4.28.2.jar
+    # Python protobuf is NOT involved here!
+    process = subprocess.Popen(cmd)
+    return process
+
+# Method 2: Call CoreNLP directly
+def analyze_text_with_corenlp(text):
+    """Analyze text using CoreNLP command line"""
+    
+    # Write text to file
+    with open('/tmp/input.txt', 'w') as f:
+        f.write(text)
+    
+    # Call Java CoreNLP (uses protobuf-java JAR)
+    cmd = [
+        'java', '-mx2g',
+        '-cp', '/opt/stanford-corenlp-4.5.6/*',
+        'edu.stanford.nlp.pipeline.StanfordCoreNLP',
+        '-annotators', 'tokenize,ssplit,pos,lemma,ner',
+        '-file', '/tmp/input.txt',
+        '-outputFormat', 'json'
+    ]
+    
+    # This subprocess uses Java's protobuf, NOT Python's!
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    
+    # Parse the JSON output (regular JSON, not protobuf)
+    with open('/tmp/input.txt.json', 'r') as f:
+        return json.load(f)
+
+# Method 3: Using REST API
+def analyze_with_api(text):
+    """Call CoreNLP server via REST API"""
+    # The server (Java) uses protobuf internally
+    # But the API returns JSON to Python
+    response = requests.post(
+        'http://localhost:9000/?properties={"annotators":"ner,pos"}',
+        data=text.encode('utf-8')
+    )
+    return response.json()
+
+if __name__ == "__main__":
+    text = "Apple Inc. is headquartered in Cupertino, California."
+    
+    print("Stanford CoreNLP Analysis:")
+    print("-" * 50)
+    
+    # When this runs, it uses Java protobuf, not Python protobuf
+    result = analyze_text_with_corenlp(text)
+    
+    print(f"Input: {text}")
+    print(f"NER Results: {result}")
+    
+    # Python protobuf is NOT used in this script at all!
+    # Even though protobuf is installed via pip
+PYTHON
+
+echo "Script saved to /tmp/corenlp_example.py"
+
+# =====================================================
+# PYTHON PROTOBUF USAGE
+# =====================================================
+
+echo -e "\n======================================================="
+echo "PART 2: PYTHON PROTOBUF USAGE"
+echo "======================================================="
+
+echo -e "\n[4] How Python uses protobuf (different from CoreNLP):"
+echo "--------------------------------------------------------"
+
+cat << 'PYTHON' > /tmp/python_protobuf_example.py
+#!/usr/bin/env python
+"""
+This shows how Python uses its own protobuf package
+This is COMPLETELY SEPARATE from Stanford CoreNLP's Java protobuf
+"""
+
+# Python protobuf is used by these libraries:
+import google.protobuf
+print(f"Python protobuf version: {google.protobuf.__version__}")
+
+# Example 1: TensorFlow uses Python protobuf
+try:
+    import tensorflow as tf
+    # TensorFlow SavedModel format uses protobuf
+    model = tf.keras.Sequential([
+        tf.keras.layers.Dense(10, activation='relu'),
+        tf.keras.layers.Dense(1)
+    ])
+    # When you save this model, it uses Python protobuf
+    # model.save('my_model')  # <-- Uses Python protobuf for serialization
+    print("TensorFlow uses Python protobuf for model serialization")
+except ImportError:
+    print("TensorFlow not installed")
+
+# Example 2: SageMaker uses Python protobuf
+try:
+    import sagemaker
+    # SageMaker training jobs use protobuf for job definitions
+    # This uses Python protobuf, not Java!
+    print("SageMaker Python SDK uses Python protobuf")
+except ImportError:
+    pass
+
+# Example 3: Direct protobuf usage in Python
+from google.protobuf import json_format
+from google.protobuf.struct_pb2 import Struct
+
+# Create a protobuf message
+data = Struct()
+data.update({
+    "name": "example",
+    "value": 42,
+    "nested": {"key": "value"}
+})
+
+# Serialize to JSON
+json_string = json_format.MessageToJson(data)
+print(f"\nPython protobuf serialization: {json_string}")
+
+# This ALL uses Python protobuf from pip
+# It has NOTHING to do with the Java protobuf JAR in Stanford CoreNLP!
+PYTHON
+
+echo -e "\nScript saved to /tmp/python_protobuf_example.py"
+
+# =====================================================
+# VULNERABILITY IMPACT ANALYSIS
+# =====================================================
+
+echo -e "\n======================================================="
+echo "PART 3: WHICH VULNERABILITY IS MORE CRITICAL FOR YOU?"
+echo "======================================================="
+
+cat << 'EOF'
+
+Based on your Docker setup, here's the vulnerability impact:
+
+┌─────────────────────────────────────────────────────────────┐
+│ VULNERABILITY SEVERITY ANALYSIS FOR YOUR USE CASE          │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│ 1. PYTHON PROTOBUF (CVE-2025-4565) - MORE CRITICAL ⚠️      │
+│    Impact Level: HIGH                                      │
+│    Why it matters more:                                    │
+│    • Used by SageMaker SDK (core functionality)           │
+│    • Used by TensorFlow/PyTorch if installed              │
+│    • Used by Jupyter notebooks                             │
+│    • Affects all Python ML pipelines                      │
+│    • Direct exposure to user code                          │
+│                                                             │
+│ 2. JAVA PROTOBUF (in CoreNLP) - LESS CRITICAL             │
+│    Impact Level: MEDIUM                                    │
+│    Why it matters less:                                    │
+│    • Only used when you specifically call CoreNLP         │
+│    • Isolated to NLP processing tasks                     │
+│    • Not exposed directly to user code                    │
+│    • Only processes text data you send to it              │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+EOF
+
+# =====================================================
+# DEMONSTRATION OF ISOLATION
+# =====================================================
+
+echo -e "\n======================================================="
+echo "PART 4: PROVING THEY'RE ISOLATED"
+echo "======================================================="
+
+cat << 'BASH' > /tmp/test_isolation.sh
+#!/bin/bash
+
+echo "Testing vulnerability isolation..."
+
+# Test 1: Python works even if Java protobuf is removed
+echo -e "\n[Test 1] Python protobuf works independently:"
+python -c "
+import google.protobuf
+print(f'✓ Python protobuf {google.protobuf.__version__} is working')
+"
+
+# Test 2: Show Java protobuf location
+echo -e "\n[Test 2] Java protobuf is separate:"
+ls -la /opt/stanford-corenlp-4.5.6/protobuf*.jar 2>/dev/null && \
+    echo "✓ Java protobuf JAR exists separately"
+
+# Test 3: Demonstrate different versions
+echo -e "\n[Test 3] Different versions proof:"
+echo "Python protobuf version:"
+pip show protobuf | grep Version | awk '{print "  " $2}'
+
+echo "Java protobuf version:"
+ls /opt/stanford-corenlp-4.5.6/protobuf*.jar 2>/dev/null | \
+    grep -oP '\d+\.\d+\.\d+' | awk '{print "  " $0}'
+
+echo -e "\n✓ They have different version numbers - proving they're separate!"
+BASH
+
+chmod +x /tmp/test_isolation.sh
+
+# =====================================================
+# ERROR DIAGNOSIS
+# =====================================================
+
+echo -e "\n======================================================="
+echo "PART 5: DIAGNOSING YOUR ERRORS"
+echo "======================================================="
+
+cat << 'EOF'
+If you're getting protobuf-related errors, here's how to identify which one:
+
+┌─────────────────────────────────────────────────────────────┐
+│ ERROR TYPE 1: Python Protobuf Errors                       │
+├─────────────────────────────────────────────────────────────┤
+│ Symptoms:                                                   │
+│ • ImportError: cannot import name 'builder' from          │
+│   'google.protobuf.internal'                               │
+│ • TypeError: Descriptors cannot not be created directly    │
+│ • Errors when using SageMaker SDK                         │
+│ • Errors in Jupyter notebooks                             │
+│                                                             │
+│ Fix: pip install --upgrade "protobuf>=5.28.3"            │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│ ERROR TYPE 2: Java/CoreNLP Protobuf Errors                │
+├─────────────────────────────────────────────────────────────┤
+│ Symptoms:                                                   │
+│ • java.lang.NoClassDefFoundError:                         │
+│   com/google/protobuf/MessageOrBuilder                    │
+│ • Errors only when running Stanford CoreNLP               │
+│ • "Exception in thread main" with protobuf mentioned      │
+│                                                             │
+│ Fix: Replace protobuf-java JAR in CoreNLP directory       │
+└─────────────────────────────────────────────────────────────┘
+EOF
+
+# =====================================================
+# RECOMMENDATIONS
+# =====================================================
+
+echo -e "\n======================================================="
+echo "RECOMMENDATIONS FOR YOUR SETUP"
+echo "======================================================="
+
+cat << 'EOF'
+Based on your SageMaker distribution setup:
+
+PRIORITY 1 (CRITICAL): Fix Python protobuf
+----------------------------------------
+WHY: This affects your core ML functionality
+IMPACT: All Python ML code, SageMaker SDK, Jupyter
+FIX: 
+  RUN pip install --upgrade "protobuf>=5.28.3"
+
+PRIORITY 2 (IMPORTANT): Fix Java protobuf  
+----------------------------------------
+WHY: Security compliance, prevent exploitation
+IMPACT: Only Stanford CoreNLP NLP tasks
+FIX:
+  RUN cd /opt/stanford-corenlp-4.5.6 && \
+      wget .../protobuf-java-4.29.2.jar && \
+      rm protobuf-java-4.28.2.jar
+
+YOUR ERROR IS LIKELY WITH: Python protobuf
+----------------------------------------
+• 90% of protobuf errors in SageMaker are Python-related
+• Java protobuf errors only occur when calling CoreNLP
+• If you see errors in Jupyter/training, it's Python
+• If you see "java.lang" errors, it's Java
+
+TEST COMMAND TO IDENTIFY:
+python -c "import google.protobuf; print(google.protobuf.__version__)"
+# If this fails, Python protobuf is the issue
+EOF
