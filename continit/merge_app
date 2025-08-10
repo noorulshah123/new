@@ -1,0 +1,400 @@
+#!/usr/bin/env python3
+import boto3
+import yaml
+import json
+import os
+import sys
+from typing import Dict, List, Any
+
+class ShinyProxyConfigManager:
+    def __init__(self):
+        self.s3_client = boto3.client('s3')
+        self.ssm_client = boto3.client('ssm')
+        self.secrets_client = boto3.client('secretsmanager')
+        
+        # Environment variables
+        self.team_name = os.getenv('TEAM_NAME')
+        self.cluster_name = os.getenv('CLUSTER_NAME', f'{self.team_name}-cluster')
+        self.aws_region = os.getenv('AWS_REGION', 'ap-southeast-2')
+        self.environment = os.getenv('ENVIRONMENT', 'dev')
+        
+        # S3 configuration
+        self.s3_bucket = f"{self.team_name}-sagemaker-globaltech-{self.environment}"
+        self.apps_config_key = 'apps/apps.yml'
+        
+    def get_secret(self, secret_name: str) -> Dict:
+        """Retrieve secret from AWS Secrets Manager"""
+        try:
+            response = self.secrets_client.get_secret_value(SecretId=secret_name)
+            return json.loads(response['SecretString'])
+        except Exception as e:
+            print(f"Error retrieving secret {secret_name}: {e}")
+            return {}
+    
+    def get_parameter(self, param_name: str) -> str:
+        """Retrieve parameter from AWS Parameter Store"""
+        try:
+            response = self.ssm_client.get_parameter(Name=param_name, WithDecryption=True)
+            return response['Parameter']['Value']
+        except Exception as e:
+            print(f"Error retrieving parameter {param_name}: {e}")
+            return ""
+    
+    def read_apps_config_from_s3(self) -> Dict:
+        """Read apps.yml from S3 bucket"""
+        try:
+            response = self.s3_client.get_object(Bucket=self.s3_bucket, Key=self.apps_config_key)
+            content = response['Body'].read().decode('utf-8')
+            return yaml.safe_load(content)
+        except Exception as e:
+            print(f"Error reading apps config from S3: {e}")
+            return {'apps': []}
+    
+    def setup_redis_config(self) -> Dict:
+        """Setup Redis configuration for session management and pre-initialization"""
+        redis_host = self.get_parameter(f"/{self.team_name}/redis/host") or "redis_connection_host"
+        redis_port = self.get_parameter(f"/{self.team_name}/redis/port") or "6379"
+        redis_password = self.get_secret(f"{self.team_name}-redis-password").get('password', '')
+        
+        return {
+            'host': redis_host,
+            'port': int(redis_port),
+            'password': redis_password,
+            'ssl': True,
+            'namespace': f"{self.team_name}-{self.environment}",
+            'timeout': 30000,  # 30 seconds
+            'connection-pool-size': 10
+        }
+    
+    def setup_oauth_config(self) -> Dict:
+        """Setup OAuth/OpenID configuration"""
+        oauth_secret = self.get_secret(f"{self.team_name}/oauth")
+        
+        return {
+            'auth-url': oauth_secret.get('auth_url', 'https://login.microsoftonline.com/oauth2/v2.0/authorize'),
+            'token-url': oauth_secret.get('token_url', 'https://login.microsoftonline.com/oauth2/v2.0/token'),
+            'jwks-url': oauth_secret.get('jwks_url', 'https://login.microsoftonline.com/discovery/v2.0/keys'),
+            'logout-url': oauth_secret.get('logout_url', 'https://login.microsoftonline.com/oauth2/v2.0/logout'),
+            'client-id': oauth_secret.get('client_id', ''),
+            'client-secret': oauth_secret.get('client_secret', ''),
+            'scopes': ['openid', 'profile', 'email', 'offline_access'],
+            'username-attribute': 'preferred_username',
+            'roles-claim': 'groups'
+        }
+    
+    def setup_ecs_config(self) -> Dict:
+        """Setup ECS backend configuration"""
+        subnets = self.get_parameter(f"/{self.team_name}/ecs/subnets").split(',')
+        security_groups = self.get_parameter(f"/{self.team_name}/ecs/security-groups").split(',')
+        task_role = self.get_parameter(f"/{self.team_name}/ecs/task-role")
+        execution_role = self.get_parameter(f"/{self.team_name}/ecs/execution-role")
+        
+        return {
+            'enable-cloudwatch': True,
+            'name': self.cluster_name,
+            'region': self.aws_region,
+            'security-groups': security_groups,
+            'subnets': subnets,
+            'task-role': task_role,
+            'execution-role': execution_role,
+            'enable-container-insights': True,
+            'log-group': f"/ecs/{self.team_name}/shinyproxy"
+        }
+    
+    def generate_app_spec(self, app_config: Dict) -> Dict:
+        """Generate application specification with pre-initialization support"""
+        app_id = app_config.get('id')
+        app_type = app_config.get('type', 'shiny')
+        
+        # Base container resources
+        cpu = app_config.get('cpu', 1024)
+        memory = app_config.get('memory', 2048)
+        
+        # Container image
+        if app_type == 'pyshiny':
+            default_image = '123456789101.dkr.ecr.ap-southeast-2.amazonaws.com/app-runtime:prd'
+        else:
+            default_image = '123456789101.dkr.ecr.ap-southeast-2.amazonaws.com/app-runtime:rshiny'
+        
+        container_image = app_config.get('container-image', default_image)
+        
+        app_spec = {
+            'id': app_id,
+            'display-name': app_config.get('display-name', app_id),
+            'description': app_config.get('description', f'Application {app_id}'),
+            'container-image': container_image,
+            'container-cpu-request': cpu,
+            'container-memory-request': memory,
+            'container-cmd': app_config.get('container-cmd', []),
+            'port': app_config.get('port', 8888),
+            'target-path': app_config.get('target-path', ''),
+            
+            # Static environment variables (set at container start)
+            'container-env': self.get_container_env(app_config),
+            
+            # HTTP headers for user context (injected when user connects)
+            'http-headers': self.get_http_headers(),
+            
+            # Access control
+            'access-users': app_config.get('access-users', []),
+            'access-groups': app_config.get('access-groups', [])
+        }
+        
+        # Pre-initialization configuration
+        if app_config.get('enable-pre-init', False):
+            app_spec.update(self.get_pre_init_config(app_config))
+        
+        # Container sharing configuration
+        if app_config.get('enable-sharing', False):
+            app_spec.update(self.get_sharing_config(app_config))
+        
+        # WebSocket support for interactive apps
+        if app_config.get('websocket-enabled', False):
+            app_spec['websocket-enabled'] = True
+            app_spec['websocket-reconnection-mode'] = app_config.get('websocket-reconnection-mode', 'None')
+        
+        return app_spec
+    
+    def get_container_env(self, app_config: Dict) -> Dict:
+        """Get static environment variables for container"""
+        app_type = app_config.get('type', 'shiny')
+        
+        env = {
+            'APP_DIR': '/home/shinyuser',
+            'APP_TYPE': app_type,
+            'S3_BUCKET': self.s3_bucket,
+            'S3_KEY': app_config.get('s3_key', f"apps/{app_config.get('id')}"),
+            'AWS_REGION': self.aws_region,
+            'ENVIRONMENT': self.environment,
+            'TEAM_NAME': self.team_name,
+            'APP_ID': app_config.get('id'),
+            'LOG_LEVEL': app_config.get('log_level', 'INFO'),
+            # Pre-init flag for app to know it's in pre-init mode
+            'PRE_INIT_MODE': 'true' if app_config.get('enable-pre-init', False) else 'false'
+        }
+        
+        # Add custom environment variables
+        custom_env = app_config.get('environment', {})
+        env.update(custom_env)
+        
+        return env
+    
+    def get_http_headers(self) -> Dict:
+        """Get HTTP headers that will be injected with user context"""
+        return {
+            # OAuth/OIDC headers
+            'Authorization': 'Bearer #{oidcUser.accessToken}',
+            'X-SP-UserId': '#{proxy.userId}',
+            'X-SP-Username': '#{oidcUser.preferredUsername}',
+            'X-SP-Email': '#{oidcUser.email}',
+            'X-SP-UserGroups': '#{proxy.userGroups}',
+            
+            # Additional user attributes from OIDC
+            'X-SP-GivenName': '#{oidcUser.givenName}',
+            'X-SP-FamilyName': '#{oidcUser.familyName}',
+            'X-SP-DisplayName': '#{oidcUser.name}',
+            
+            # Session information
+            'X-SP-SessionId': '#{proxy.sessionId}',
+            'X-SP-ProxyId': '#{proxy.id}',
+            
+            # Team context
+            'X-SP-Team': self.team_name,
+            'X-SP-Environment': self.environment
+        }
+    
+    def get_pre_init_config(self, app_config: Dict) -> Dict:
+        """Get pre-initialization configuration"""
+        config = {}
+        
+        # Number of containers to pre-initialize
+        seats = app_config.get('pre-init-seats', 2)
+        config['container-pre-initialization-seats'] = seats
+        
+        # Minimum available seats to maintain
+        min_seats = app_config.get('min-seats-available', 1)
+        config['minimum-seats-available'] = min_seats
+        
+        # Pre-init timeout (milliseconds)
+        timeout = app_config.get('pre-init-timeout', 300000)  # 5 minutes default
+        config['container-pre-initialization-timeout'] = timeout
+        
+        return config
+    
+    def get_sharing_config(self, app_config: Dict) -> Dict:
+        """Get container sharing configuration"""
+        config = {}
+        
+        # Maximum users per container
+        max_seats = app_config.get('max-seats-per-container', 1)
+        config['max-seats-per-container'] = max_seats
+        
+        # Seat claim timeout (milliseconds)
+        claim_timeout = app_config.get('seat-claim-timeout', 60000)  # 1 minute default
+        config['seat-claim-timeout'] = claim_timeout
+        
+        return config
+    
+    def setup_proxy_config(self) -> Dict:
+        """Setup main proxy configuration"""
+        return {
+            'title': f'{self.team_name.upper()} Analytics Platform',
+            'logo-url': f"https://www.openanalytics.eu/shinyproxy/logo.png",
+            'landing-page': '/',
+            'heartbeat-rate': 10000,
+            'heartbeat-timeout': 60000,
+            'port': 8080,
+            'authentication': 'openid',
+            'admin-groups': self.get_parameter(f"/{self.team_name}/admin-groups").split(','),
+            'container-log-path': '/var/log/shinyproxy',
+            
+            # Session configuration
+            'session': {
+                'store-type': 'redis',
+                'timeout': 3600  # 1 hour
+            },
+            
+            # Container backend
+            'container-backend': 'ecs',
+            
+            # Redis configuration
+            'redis': self.setup_redis_config(),
+            
+            # OpenID configuration
+            'openid': self.setup_oauth_config(),
+            
+            # ECS configuration
+            'ecs': self.setup_ecs_config(),
+            
+            # Recover running proxies settings
+            'recover-running-proxies': False,  # Must be false with pre-init
+            'recover-running-proxies-from-different-config': False,
+            
+            # Usage statistics
+            'usage-stats-url': 'http://localhost:8086/write?db=shinyproxy',
+            'usage-stats-username': 'admin',
+            'usage-stats-password': self.get_secret(f"{self.team_name}/influxdb").get('password', '')
+        }
+    
+    def validate_app_config(self, app_config: Dict) -> bool:
+        """Validate application configuration"""
+        required_fields = ['id', 'display-name']
+        
+        for field in required_fields:
+            if field not in app_config:
+                print(f"Warning: Missing required field '{field}' in app config")
+                return False
+        
+        # Validate pre-init configuration
+        if app_config.get('enable-pre-init', False):
+            if app_config.get('enable-sharing', False):
+                max_seats = app_config.get('max-seats-per-container', 1)
+                if max_seats > 1:
+                    print(f"Info: App {app_config['id']} configured for pre-init with {max_seats} seats per container")
+        
+        return True
+    
+    def merge_configs(self) -> Dict:
+        """Merge all configurations into final application.yml"""
+        print(f"Starting configuration merge for team: {self.team_name}")
+        
+        # Read apps configuration from S3
+        apps_config = self.read_apps_config_from_s3()
+        
+        # Setup base proxy configuration
+        proxy_config = self.setup_proxy_config()
+        
+        # Process each app
+        specs = []
+        for app_config in apps_config.get('apps', []):
+            if self.validate_app_config(app_config):
+                spec = self.generate_app_spec(app_config)
+                specs.append(spec)
+                print(f"Added app: {spec['id']} (pre-init: {app_config.get('enable-pre-init', False)})")
+        
+        # Create final configuration
+        final_config = {
+            'proxy': proxy_config,
+            'specs': specs,
+            'logging': {
+                'file': {
+                    'name': 'shinyproxy.log'
+                },
+                'level': {
+                    'root': 'INFO',
+                    'eu': {
+                        'openanalytics': {
+                            'containerproxy': {
+                                'auth': 'DEBUG'
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        return final_config
+    
+    def write_config(self, config: Dict, output_path: str = '/opt/shinyproxy/application.yml'):
+        """Write configuration to file"""
+        try:
+            with open(output_path, 'w') as f:
+                yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+            print(f"Configuration written to {output_path}")
+            return True
+        except Exception as e:
+            print(f"Error writing configuration: {e}")
+            return False
+    
+    def backup_config(self, config: Dict):
+        """Backup configuration to S3"""
+        try:
+            config_yaml = yaml.dump(config, default_flow_style=False, sort_keys=False)
+            backup_key = f"configs/backup/application-{self.environment}.yml"
+            
+            self.s3_client.put_object(
+                Bucket=self.s3_bucket,
+                Key=backup_key,
+                Body=config_yaml,
+                ContentType='application/x-yaml'
+            )
+            print(f"Configuration backed up to s3://{self.s3_bucket}/{backup_key}")
+        except Exception as e:
+            print(f"Error backing up configuration: {e}")
+
+def main():
+    """Main execution function"""
+    try:
+        manager = ShinyProxyConfigManager()
+        
+        # Generate configuration
+        config = manager.merge_configs()
+        
+        # Write configuration
+        if not manager.write_config(config):
+            print("Failed to write configuration")
+            sys.exit(1)
+        
+        # Backup to S3
+        manager.backup_config(config)
+        
+        print("Configuration merge completed successfully")
+        
+        # Print summary
+        print(f"\nConfiguration Summary:")
+        print(f"- Team: {manager.team_name}")
+        print(f"- Environment: {manager.environment}")
+        print(f"- Total apps: {len(config.get('specs', []))}")
+        
+        pre_init_apps = [s for s in config.get('specs', []) if 'container-pre-initialization-seats' in s]
+        print(f"- Pre-initialized apps: {len(pre_init_apps)}")
+        
+        shared_apps = [s for s in config.get('specs', []) if s.get('max-seats-per-container', 1) > 1]
+        print(f"- Shared container apps: {len(shared_apps)}")
+        
+    except Exception as e:
+        print(f"Fatal error: {e}")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
