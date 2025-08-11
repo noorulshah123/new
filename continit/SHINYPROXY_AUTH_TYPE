@@ -1,0 +1,10 @@
+# ❌ REMOVE THIS - Not needed
+app_spec['container-env']['SHINYPROXY_AUTH_TYPE'] = 'header'
+
+# ✅ Your container-env should only have static values
+app_spec['container-env'] = {
+    'APP_DIR': '/home/shinyuser',
+    'PRE_INIT_MODE': 'true',
+    'MAX_SEATS_PER_CONTAINER': '5'
+    # NO user-specific data here!
+}
