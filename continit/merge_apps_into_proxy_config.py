@@ -40,3 +40,16 @@ def merge_apps_into_proxy_config(appproxy_application_config, team_name):
     except Exception as e:
         print(f"Error in merge_apps_into_proxy_config: {e}")
         raise
+
+
+To recommend the best approach, could you quickly clarify:
+
+What does your Python script do and how long does it typically run?
+How often will Power Automate trigger it? (few times daily vs hundreds)
+Any preference on costs? (on-demand vs always-on resources)
+
+Potential solutions:
+
+Lambda + API Gateway - Simple HTTP endpoint, serverless, pay-per-use
+Direct SageMaker Endpoint - If it's ML inference, direct HTTPS access
+S3 trigger pattern - Power Automate → S3 → Lambda/SageMaker
