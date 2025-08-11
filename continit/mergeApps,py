@@ -1,0 +1,370 @@
+#!/usr/bin/env python3
+"""
+Updates to add to your existing merge_apps.py
+Add these functions and modify your merge_apps_into_proxy_config function
+"""
+
+import boto3
+import yaml
+import json
+import os
+# ... your existing imports ...
+
+# ============================================================
+# ADD THESE NEW FUNCTIONS AFTER YOUR EXISTING FUNCTIONS
+# ============================================================
+
+def get_app_type_defaults(app_type: str, team_name: str) -> dict:
+    """
+    Get intelligent defaults based on app type
+    Add this function after your existing setup functions
+    """
+    ecr_registry = os.getenv('ECR_REGISTRY', '123456789101.dkr.ecr.ap-southeast-2.amazonaws.com')
+    
+    defaults = {
+        'dashboard': {
+            'port': 3838,
+            'container-image': f'{ecr_registry}/app-runtime:rshiny',
+            'container-cpu-request': 2048,
+            'container-memory-request': 4096,
+            'max-seats-per-container': 10,
+            'enable-pre-init': True,
+            'container-pre-initialization-seats': 2,
+            'minimum-seats-available': 1,
+            'websocket-enabled': False,
+            'access-level': 'all'  # Available to all authenticated users
+        },
+        
+        'rshiny': {
+            'port': 3838,
+            'container-image': f'{ecr_registry}/app-runtime:rshiny',
+            'container-cpu-request': 2048,
+            'container-memory-request': 4096,
+            'max-seats-per-container': 3,
+            'enable-pre-init': True,
+            'container-pre-initialization-seats': 2,
+            'minimum-seats-available': 1,
+            'websocket-enabled': True,
+            'access-level': 'groups'
+        },
+        
+        'pyshiny': {
+            'port': 8000,
+            'container-image': f'{ecr_registry}/app-runtime:prd',
+            'container-cpu-request': 2048,
+            'container-memory-request': 4096,
+            'max-seats-per-container': 3,
+            'enable-pre-init': True,
+            'container-pre-initialization-seats': 1,
+            'minimum-seats-available': 1,
+            'websocket-enabled': True,
+            'access-level': 'groups'
+        },
+        
+        'jupyter': {
+            'port': 8888,
+            'container-image': f'{ecr_registry}/jupyter:latest',
+            'container-cpu-request': 4096,
+            'container-memory-request': 8192,
+            'max-seats-per-container': 1,
+            'enable-pre-init': False,
+            'container-pre-initialization-seats': 0,
+            'minimum-seats-available': 0,
+            'websocket-enabled': True,
+            'access-level': 'users'
+        },
+        
+        'rstudio': {
+            'port': 8787,
+            'container-image': f'{ecr_registry}/rstudio:latest',
+            'container-cpu-request': 4096,
+            'container-memory-request': 8192,
+            'max-seats-per-container': 1,
+            'enable-pre-init': False,
+            'container-pre-initialization-seats': 0,
+            'minimum-seats-available': 0,
+            'websocket-enabled': False,
+            'access-level': 'users'
+        },
+        
+        'ml-model': {
+            'port': 8000,
+            'container-image': f'{ecr_registry}/ml-runtime:latest',
+            'container-cpu-request': 8192,
+            'container-memory-request': 16384,
+            'max-seats-per-container': 1,
+            'enable-pre-init': False,
+            'container-pre-initialization-seats': 0,
+            'minimum-seats-available': 0,
+            'websocket-enabled': True,
+            'access-level': 'groups'
+        }
+    }
+    
+    # Return defaults for the type, or rshiny as default
+    return defaults.get(app_type, defaults['rshiny'])
+
+def generate_app_id_from_s3_key(s3_key: str, app_type: str) -> str:
+    """
+    Generate app ID from S3 key
+    e.g., "apps/dashboard/sales" -> "sales-dashboard"
+    """
+    # Extract app name from S3 key
+    parts = s3_key.strip('/').split('/')
+    if len(parts) > 1:
+        app_name = parts[-1]
+    else:
+        app_name = parts[0]
+    
+    # Clean up the name
+    app_id = app_name.lower().replace('_', '-').replace(' ', '-')
+    
+    # Add type suffix if not already present
+    if not app_id.endswith(app_type):
+        app_id = f"{app_id}-{app_type}"
+    
+    return app_id
+
+def generate_display_name_from_id(app_id: str) -> str:
+    """
+    Generate user-friendly display name from app ID
+    e.g., "sales-dashboard" -> "Sales Dashboard"
+    """
+    words = app_id.replace('-', ' ').replace('_', ' ').split()
+    return ' '.join(word.capitalize() for word in words)
+
+def get_access_control_for_level(access_level: str, team_name: str) -> dict:
+    """
+    Get access control configuration based on level
+    """
+    access_configs = {
+        'all': {
+            # No restrictions - all authenticated users
+            # Don't add access-users or access-groups
+        },
+        'groups': {
+            # Standard group restrictions
+            'access-groups': [
+                'analysts',
+                'data-scientists',
+                f'{team_name}-users'
+            ]
+        },
+        'users': {
+            # Specific users (developers, admins)
+            'access-groups': [
+                'developers',
+                f'{team_name}-developers'
+            ]
+        },
+        'restricted': {
+            # Very restricted access
+            'access-groups': [
+                'admins',
+                f'{team_name}-admins'
+            ]
+        }
+    }
+    
+    return access_configs.get(access_level, access_configs['groups'])
+
+# ============================================================
+# REPLACE YOUR EXISTING merge_apps_into_proxy_config FUNCTION
+# ============================================================
+
+def merge_apps_into_proxy_config(appproxy_application_config, team_name):
+    """
+    Enhanced version of your merge_apps_into_proxy_config with auto-configuration
+    """
+    try:
+        print("Configuring Apps")
+        client = boto3.client('s3')
+        
+        # Your existing code to get S3 path
+        team_apps_s3_url = os.getenv('TEAM_APPS_S3')
+        # Parse bucket and key from your S3 URL
+        # ... your existing S3 parsing code ...
+        
+        # Initialize specs list
+        if 'specs' not in appproxy_application_config['proxy']:
+            appproxy_application_config['proxy']['specs'] = []
+        
+        specs = appproxy_application_config['proxy']['specs']
+        
+        # Statistics for summary
+        stats = {
+            'total': 0,
+            'pre_init': 0,
+            'shared': 0,
+            'on_demand': 0
+        }
+        
+        # Read apps configuration from S3 (your existing code)
+        # Assuming you get team_apps_s3_url parsed to bucket_name and file_key
+        s3_object = client.get_object(Bucket=bucket_name, Key=file_key)
+        file_content = s3_object['Body'].read().decode('utf-8')
+        apps_config = yaml.safe_load(file_content)
+        
+        # Process each app
+        for app_config in apps_config.get('apps', []):
+            # Check if this is a minimal config (only s3_key and type)
+            is_minimal = len(app_config.keys()) <= 3  # s3_key, type, and maybe id
+            
+            if is_minimal:
+                # Auto-configure everything
+                s3_key = app_config.get('s3_key', '')
+                app_type = app_config.get('type', 'rshiny').lower()
+                
+                if not s3_key:
+                    print(f"Warning: No s3_key provided for app, skipping")
+                    continue
+                
+                # Get defaults for this app type
+                defaults = get_app_type_defaults(app_type, team_name)
+                
+                # Generate app ID if not provided
+                app_id = app_config.get('id', generate_app_id_from_s3_key(s3_key, app_type))
+                
+                # Generate display name
+                display_name = generate_display_name_from_id(app_id)
+                
+                # Build app spec with defaults
+                app_spec = {
+                    'id': app_id,
+                    'display-name': display_name,
+                    'description': f'{display_name} Application',
+                    'container-image': defaults['container-image'],
+                    'container-cpu-request': defaults['container-cpu-request'],
+                    'container-memory-request': defaults['container-memory-request'],
+                    'port': defaults['port'],
+                    'websocket-enabled': defaults.get('websocket-enabled', False)
+                }
+                
+                # Add container sharing if applicable
+                max_seats = defaults.get('max-seats-per-container', 1)
+                if max_seats > 1:
+                    app_spec['max-seats-per-container'] = max_seats
+                    # Adjust resources for sharing
+                    app_spec['container-cpu-request'] = max(
+                        app_spec['container-cpu-request'],
+                        max_seats * 512
+                    )
+                    app_spec['container-memory-request'] = max(
+                        app_spec['container-memory-request'],
+                        max_seats * 1024
+                    )
+                
+                # Add pre-initialization if applicable
+                if defaults.get('enable-pre-init', False):
+                    app_spec['container-pre-initialization-seats'] = defaults.get(
+                        'container-pre-initialization-seats', 2
+                    )
+                    app_spec['minimum-seats-available'] = defaults.get(
+                        'minimum-seats-available', 1
+                    )
+                
+                # Add access control
+                access_level = defaults.get('access-level', 'groups')
+                access_control = get_access_control_for_level(access_level, team_name)
+                if 'access-groups' in access_control:
+                    app_spec['access-groups'] = access_control['access-groups']
+                
+                # Set container environment variables
+                app_spec['container-env'] = {
+                    'APP_DIR': '/home/shinyuser',
+                    'APP_TYPE': app_type,
+                    'APP_ID': app_id,
+                    'S3_BUCKET': bucket_name,
+                    'S3_KEY': s3_key,
+                    'TEAM_NAME': team_name,
+                    'PRE_INIT_MODE': 'true' if defaults.get('enable-pre-init') else 'false',
+                    'MAX_SEATS_PER_CONTAINER': str(max_seats),
+                    'SHARED_CONTAINER': 'true' if max_seats > 1 else 'false',
+                    'USER_DATA_BASE': '/tmp/shinyproxy_users'
+                }
+                
+                print(f"Auto-configured app: {app_id} (type: {app_type})")
+                
+            else:
+                # Use your existing code for fully specified apps
+                app_spec = app_config.copy()
+                
+                # Ensure required fields
+                if 'id' not in app_spec:
+                    app_spec['id'] = generate_app_id_from_s3_key(
+                        app_spec.get('s3_key', 'app'),
+                        app_spec.get('type', 'rshiny')
+                    )
+                
+                if 'display-name' not in app_spec:
+                    app_spec['display-name'] = generate_display_name_from_id(app_spec['id'])
+                
+                # Your existing container-env setup
+                if 'container-env' not in app_spec:
+                    app_spec['container-env'] = {}
+                
+                # Ensure essential environment variables
+                app_spec['container-env'].update({
+                    'APP_DIR': '/home/shinyuser',
+                    'S3_BUCKET': bucket_name,
+                    'S3_KEY': app_spec.get('s3_key', f"apps/{app_spec['id']}"),
+                    'TEAM_NAME': team_name,
+                    'PRE_INIT_MODE': 'true' if app_spec.get('enable-pre-init', False) else 'false',
+                    'MAX_SEATS_PER_CONTAINER': str(app_spec.get('max-seats-per-container', 1))
+                })
+            
+            # Add HTTP headers (same for all apps)
+            app_spec['http-headers'] = {
+                'Authorization': 'Bearer #{oidcUser.accessToken}',
+                'X-SP-UserId': '#{proxy.userId}',
+                'X-SP-Username': '#{oidcUser.preferredUsername}',
+                'X-SP-Email': '#{oidcUser.email}',
+                'X-SP-UserGroups': '#{proxy.userGroups}',
+                'X-SP-SessionId': '#{proxy.sessionId}',
+                'X-SP-Team': team_name
+            }
+            
+            # Add to specs
+            specs.append(app_spec)
+            
+            # Update statistics
+            stats['total'] += 1
+            if app_spec.get('container-pre-initialization-seats', 0) > 0:
+                stats['pre_init'] += 1
+            else:
+                stats['on_demand'] += 1
+            if app_spec.get('max-seats-per-container', 1) > 1:
+                stats['shared'] += 1
+        
+        # Print summary
+        print(f"\nConfiguration Summary:")
+        print(f"  Total apps: {stats['total']}")
+        print(f"  Pre-initialized: {stats['pre_init']}")
+        print(f"  On-demand: {stats['on_demand']}")
+        print(f"  Shared containers: {stats['shared']}")
+        
+    except Exception as e:
+        print(f"Error in merge_apps_into_proxy_config: {e}")
+        raise
+
+# ============================================================
+# UPDATE YOUR MAIN FUNCTION (if needed)
+# ============================================================
+
+# In your main execution section, after calling merge_apps_into_proxy_config:
+if __name__ == "__main__":
+    # Your existing code to read template
+    appproxy_application_config = read_application_yml(appproxy_application_config_path)
+    
+    # Your existing setup functions
+    setup_redis_app_persistence_config(appproxy_application_config, team_name)
+    setup_oauth_proxy_config(appproxy_application_config, team_name)
+    setup_admins_config(appproxy_application_config, team_name)
+    setup_users_config(appproxy_application_config, team_name)
+    
+    # Call the enhanced merge function
+    merge_apps_into_proxy_config(appproxy_application_config, team_name)
+    
+    # Your existing code to write the config
+    write_application_yml(appproxy_application_config_path, appproxy_application_config)
+    backup_application_yml(appproxy_application_config_path)
