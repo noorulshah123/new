@@ -1,3 +1,11 @@
+https://www.qloudx.com/exploring-aws-integrations-with-microsoft-power-automate/
+https://repost.aws/knowledge-center/api-gateway-internal-server-error
+https://www.winwire.com/blog/how-to-create-a-custom-connector-in-power-automate/
+https://never-stop-learning.de/power-automate-upload-to-s3-bucket/
+https://aws.amazon.com/blogs/machine-learning/call-an-amazon-sagemaker-model-endpoint-using-amazon-api-gateway-and-aws-lambda/
+
+
+https://aws.amazon.com/blogs/machine-learning/call-an-amazon-sagemaker-model-endpoint-using-amazon-api-gateway-and-aws-lambda/
 # Power Automate + AWS SageMaker Integration
 
 Connecting Microsoft Power Automate with AWS SageMaker opens powerful possibilities for automated machine learning workflows, but requires understanding the right integration patterns and security considerations. **The key insight is that direct integration is complex due to AWS authentication requirements, making an intermediary architecture using AWS API Gateway and Lambda functions the recommended approach**.
