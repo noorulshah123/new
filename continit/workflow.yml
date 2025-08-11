@@ -1,0 +1,17 @@
+User Journey:
+1. User visits ShinyProxy URL
+   ↓
+2. Redirected to SSO (Azure AD/OpenID)
+   ↓
+3. User logs in with SSO
+   ↓
+4. ShinyProxy creates session (stored in Redis)
+   ↓
+5. User sees app list (based on access-users/groups)
+   ↓
+6. User clicks an app
+   ↓
+7. ShinyProxy checks: Is user in access-users OR access-groups?
+   ↓
+8. If YES: Assign container & inject headers
+   If NO: Show "Access Denied"
