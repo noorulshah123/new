@@ -1,0 +1,178 @@
+# apps.yml - Store in S3: {team-name}-sagemaker-globaltech-dev/apps/apps.yml
+# This file is read by your merge_apps.py
+
+apps:
+  # ===== Example 1: High-Sharing Dashboard (Read-only) =====
+  - id: company-dashboard
+    display-name: "Company Metrics Dashboard"
+    description: "Read-only dashboard for all users"
+    type: rshiny
+    s3_key: "apps/dashboard"
+    
+    # Container sharing - many users can share
+    max-seats-per-container: 10     # 10 users per container
+    
+    # Pre-initialization for fast startup
+    enable-pre-init: true
+    pre-init-seats: 2               # Start 2 containers immediately
+    min-seats-available: 1          # Always keep 1 ready
+    
+    # Resources (for 10 users)
+    container-cpu-request: 4096     # 4 CPUs for 10 users
+    container-memory-request: 8192  # 8GB for 10 users
+    
+    # Access control - available to all authenticated users
+    # No access-users or access-groups means everyone can access
+    
+    port: 3838
+
+  # ===== Example 2: Analytics Tool (Medium Sharing) =====
+  - id: data-analytics
+    display-name: "Data Analytics Tool"
+    description: "Interactive analytics for data scientists"
+    type: rshiny
+    s3_key: "apps/analytics"
+    
+    # Moderate sharing
+    max-seats-per-container: 3      # 3 users per container
+    
+    # Pre-initialization
+    enable-pre-init: true
+    pre-init-seats: 2
+    min-seats-available: 1
+    
+    # Resources
+    container-cpu-request: 3072     # 3 CPUs for 3 users
+    container-memory-request: 6144  # 6GB for 3 users
+    
+    # Access control - restricted to groups
+    access-groups:
+      - "data-scientists"
+      - "analysts"
+      - "managers"
+    
+    port: 3838
+
+  # ===== Example 3: Sensitive App (No Sharing) =====
+  - id: financial-reports
+    display-name: "Financial Reports"
+    description: "Confidential financial data"
+    type: rshiny
+    s3_key: "apps/financial"
+    
+    # No sharing - dedicated container per user
+    max-seats-per-container: 1      # Default, can be omitted
+    
+    # Pre-initialization
+    enable-pre-init: true
+    pre-init-seats: 1
+    min-seats-available: 1
+    
+    # Resources (per user)
+    container-cpu-request: 1024
+    container-memory-request: 2048
+    
+    # Access control - restricted to specific users
+    access-users:
+      - "cfo@company.com"
+      - "finance.manager@company.com"
+      - "controller@company.com"
+    
+    # Also allow finance group
+    access-groups:
+      - "finance-team"
+    
+    port: 3838
+
+  # ===== Example 4: Python App with Sharing =====
+  - id: ml-model-viewer
+    display-name: "ML Model Dashboard"
+    description: "View and interact with ML models"
+    type: pyshiny
+    s3_key: "apps/ml-viewer"
+    
+    # Sharing configuration
+    max-seats-per-container: 5
+    
+    # Pre-initialization
+    enable-pre-init: true
+    pre-init-seats: 2
+    min-seats-available: 1
+    
+    # Resources
+    container-cpu-request: 4096
+    container-memory-request: 8192
+    
+    # Custom container image
+    container-image: "123456789101.dkr.ecr.ap-southeast-2.amazonaws.com/ml-app:latest"
+    
+    # Access control
+    access-groups:
+      - "ml-engineers"
+      - "data-scientists"
+    
+    port: 8000
+    
+    # Enable websockets for real-time updates
+    websocket-enabled: true
+
+  # ===== Example 5: Development Environment (No Sharing, No Pre-init) =====
+  - id: rstudio-dev
+    display-name: "RStudio Development"
+    description: "Personal RStudio environment"
+    type: rstudio
+    s3_key: "apps/rstudio"
+    
+    # No sharing - personal environment
+    max-seats-per-container: 1
+    
+    # No pre-init - start on demand
+    enable-pre-init: false
+    
+    # Resources
+    container-cpu-request: 2048
+    container-memory-request: 4096
+    
+    # Custom image
+    container-image: "rocker/rstudio:latest"
+    
+    # Access control
+    access-groups:
+      - "developers"
+      - "data-scientists"
+    
+    port: 8787
+    
+    # Custom environment variables
+    environment:
+      DISABLE_AUTH: "true"
+      ROOT: "TRUE"
+
+# ===== Configuration Guidelines =====
+# 
+# 1. Container Sharing Levels:
+#    - High (10-20 users): Read-only dashboards
+#    - Medium (3-5 users): Interactive analytics
+#    - Low (2 users): Light collaboration
+#    - None (1 user): Sensitive data, development
+#
+# 2. Pre-initialization:
+#    - Enable for frequently used apps
+#    - Set pre-init-seats based on expected concurrent users
+#    - Set min-seats-available to handle burst traffic
+#
+# 3. Resource Calculation:
+#    - CPU: max-seats × 256-512 units minimum
+#    - Memory: max-seats × 512-1024 MB minimum
+#    - Add 20-30% overhead for shared resources
+#
+# 4. Access Control:
+#    - access-users: Specific email addresses
+#    - access-groups: Azure AD/OIDC groups
+#    - Neither: Available to all authenticated users
+#
+# 5. Important Notes:
+#    - Users are authenticated ONCE at login
+#    - No re-authentication when clicking apps
+#    - Pre-init containers start without user context
+#    - Headers are injected when user is assigned
